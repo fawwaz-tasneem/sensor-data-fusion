@@ -13,10 +13,11 @@ class RadarSensor:
         # Measurement Noise Covariance R
         self.R = np.diag([self.sigma_r**2, self.sigma_phi**2])
 
-    def measure(self, target_pos):
+    def measure(self, target_pos, include_elevation=False):
         """
-        Calculates range and azimuth from radar to target.
+        Calculates range, azimuth, and optionally elevation angle from radar to target.
         target_pos: [x, y, z]
+        include_elevation: If True, also measure elevation angle
         """
         tx, ty, tz = target_pos.flatten()
         sx, sy, sz = self.pos_s
@@ -27,9 +28,17 @@ class RadarSensor:
         rng = np.sqrt((tx-sx)**2 + (ty-sy)**2 + (tz-sz)**2 - sz**2)
         
         # Azimuth equation
-        # phi = arctan((yk-ys)/(xk-xs))
+        # phi = arctan2((yk-ys)/(xk-xs))
         phi = np.arctan2((ty-sy), (tx-sx))
         
-        # Add normally distributed noise
-        z = np.array([[rng], [phi]]) + np.random.normal(0, 1, (2, 1)) * np.array([[self.sigma_r], [self.sigma_phi]])
+        if include_elevation:
+            # Elevation angle (angle above horizontal plane)
+            # theta = arcsin((z-zs) / r)
+            theta = np.arcsin(np.clip((tz - sz) / rng, -1.0, 1.0))
+            # Return [range, azimuth, elevation] with noise
+            z = np.array([[rng], [phi], [theta]]) + np.random.normal(0, 1, (3, 1)) * np.array([[self.sigma_r], [self.sigma_phi], [self.sigma_phi]])
+        else:
+            # Return [range, azimuth] with noise
+            z = np.array([[rng], [phi]]) + np.random.normal(0, 1, (2, 1)) * np.array([[self.sigma_r], [self.sigma_phi]])
+        
         return z

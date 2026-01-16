@@ -8,7 +8,8 @@ from visualizer import FusionVisualizer
 # --- Setup Parameters ---
 dt = 2.0         # Time step Delta T = 2s
 sigma_a = 0.2    # Process noise standard deviation (m/s^2)
-t = 0.0 
+t = 0.0
+Z_AXIS_MEASURED = True  # Set to True to include elevation angle measurement 
 
 # --- Stop Time Calculation ---
 # 10km road at 20km/h
@@ -44,12 +45,19 @@ d_block = (sigma_a**2) * np.array([
 ])
 D = np.block([[d_block, O, O], [O, d_block, O], [O, O, d_block]])
 
-# --- Measurement Matrix H (2x9) ---
-# Maps only 2D Cartesian [x, y] measurements to the 9D state.
-# Z is excluded because the radar cannot measure elevation.
-H_cart = np.zeros((2, 9))
-H_cart[0, 0] = 1.0 # px
-H_cart[1, 3] = 1.0 # py
+# --- Measurement Matrix H ---
+# Maps Cartesian measurements to the 9D state.
+# If Z_AXIS_MEASURED: H is 3x9 (x, y, z measurements)
+# Otherwise: H is 2x9 (x, y measurements only)
+if Z_AXIS_MEASURED:
+    H_cart = np.zeros((3, 9))
+    H_cart[0, 0] = 1.0 # px
+    H_cart[1, 3] = 1.0 # py
+    H_cart[2, 6] = 1.0 # pz
+else:
+    H_cart = np.zeros((2, 9))
+    H_cart[0, 0] = 1.0 # px
+    H_cart[1, 3] = 1.0 # py
 
 # --- History Storage for Analysis ---
 time_history = []
@@ -77,27 +85,62 @@ def simulation_step():
     gt = road.get_state(t)
     
     # 3. Sensor Measurement (Polar)
-    z1_polar = radar1.measure(gt) 
-    z2_polar = radar2.measure(gt)
+    z1_polar = radar1.measure(gt, include_elevation=Z_AXIS_MEASURED) 
+    z2_polar = radar2.measure(gt, include_elevation=Z_AXIS_MEASURED)
     
-    # 4. CONVERSION: Polar -> Cartesian (2D Only)
+    # 4. CONVERSION: Polar -> Cartesian
     # No ground truth is fed here; we only use available sensor data.
-    r1, p1 = z1_polar[0,0], z1_polar[1,0]
-    rx1, ry1, rz1 = radar1.pos_s.flatten()
-    z1_cart = np.array([[rx1 + r1*np.cos(p1)], [ry1 + r1*np.sin(p1)]])
-    
-    r2, p2 = z2_polar[0,0], z2_polar[1,0]
-    rx2, ry2, rz2 = radar2.pos_s.flatten()
-    z2_cart = np.array([[rx2 + r2*np.cos(p2)], [ry2 + r2*np.sin(p2)]])
+    if Z_AXIS_MEASURED:
+        # Polar: [range, azimuth, elevation]
+        r1, p1, t1 = z1_polar[0,0], z1_polar[1,0], z1_polar[2,0]
+        rx1, ry1, rz1 = radar1.pos_s.flatten()
+        z1_cart = np.array([
+            [rx1 + r1*np.cos(t1)*np.cos(p1)],
+            [ry1 + r1*np.cos(t1)*np.sin(p1)],
+            [rz1 + r1*np.sin(t1)]
+        ])
+        
+        r2, p2, t2 = z2_polar[0,0], z2_polar[1,0], z2_polar[2,0]
+        rx2, ry2, rz2 = radar2.pos_s.flatten()
+        z2_cart = np.array([
+            [rx2 + r2*np.cos(t2)*np.cos(p2)],
+            [ry2 + r2*np.cos(t2)*np.sin(p2)],
+            [rz2 + r2*np.sin(t2)]
+        ])
+    else:
+        # Polar: [range, azimuth] only
+        r1, p1 = z1_polar[0,0], z1_polar[1,0]
+        rx1, ry1, rz1 = radar1.pos_s.flatten()
+        z1_cart = np.array([[rx1 + r1*np.cos(p1)], [ry1 + r1*np.sin(p1)]])
+        
+        r2, p2 = z2_polar[0,0], z2_polar[1,0]
+        rx2, ry2, rz2 = radar2.pos_s.flatten()
+        z2_cart = np.array([[rx2 + r2*np.cos(p2)], [ry2 + r2*np.sin(p2)]])
 
     # 5. Noise Approximation (R_cart)
-    def get_R_cart_2d(r, phi):
-        var_x = (sig_r * np.cos(phi))**2 + (r * np.sin(phi) * sig_phi)**2
-        var_y = (sig_r * np.sin(phi))**2 + (r * np.cos(phi) * sig_phi)**2
-        return np.diag([var_x, var_y])
-
-    R_cart1 = get_R_cart_2d(r1, p1)
-    R_cart2 = get_R_cart_2d(r2, p2)
+    if Z_AXIS_MEASURED:
+        def get_R_cart_3d(r, phi, theta):
+            # Jacobian approximation for 3D polar to Cartesian conversion
+            cos_t = np.cos(theta)
+            sin_t = np.sin(theta)
+            cos_p = np.cos(phi)
+            sin_p = np.sin(phi)
+            
+            var_x = (sig_r * cos_t * cos_p)**2 + (r * cos_t * sin_p * sig_phi)**2 + (r * (-sin_t) * cos_p * sig_phi)**2
+            var_y = (sig_r * cos_t * sin_p)**2 + (r * cos_t * cos_p * sig_phi)**2 + (r * (-sin_t) * sin_p * sig_phi)**2
+            var_z = (sig_r * sin_t)**2 + (r * cos_t * sig_phi)**2
+            return np.diag([var_x, var_y, var_z])
+        
+        R_cart1 = get_R_cart_3d(r1, p1, t1)
+        R_cart2 = get_R_cart_3d(r2, p2, t2)
+    else:
+        def get_R_cart_2d(r, phi):
+            var_x = (sig_r * np.cos(phi))**2 + (r * np.sin(phi) * sig_phi)**2
+            var_y = (sig_r * np.sin(phi))**2 + (r * np.cos(phi) * sig_phi)**2
+            return np.diag([var_x, var_y])
+        
+        R_cart1 = get_R_cart_2d(r1, p1)
+        R_cart2 = get_R_cart_2d(r2, p2)
 
     # 6. Filter Update (Sequential Fusion) 
     # The filter estimates pz based on the 9D state relations.
@@ -118,10 +161,15 @@ def simulation_step():
     P_pos = kf.P[np.ix_([0, 3, 6], [0, 3, 6])]
     viz.update_data('truth', true_pos)
     
-    # Sending 3D lists to visualizer to prevent IndexError
-    # Measurements are plotted at Z=0 (floor level) since height is not measured.
-    viz.update_data('meas1', [z1_cart[0,0], z1_cart[1,0], 0]) 
-    viz.update_data('meas2', [z2_cart[0,0], z2_cart[1,0], 0])
+    # Sending 3D lists to visualizer
+    if Z_AXIS_MEASURED:
+        # Measurements include Z
+        viz.update_data('meas1', [z1_cart[0,0], z1_cart[1,0], z1_cart[2,0]]) 
+        viz.update_data('meas2', [z2_cart[0,0], z2_cart[1,0], z2_cart[2,0]])
+    else:
+        # Measurements are plotted at Z=0 (floor level) since height is not measured.
+        viz.update_data('meas1', [z1_cart[0,0], z1_cart[1,0], 0]) 
+        viz.update_data('meas2', [z2_cart[0,0], z2_cart[1,0], 0])
     
     # The filter estimate (filt_pos) includes the 3D estimated Z value
     viz.update_data('filt', filt_pos, cov=P_pos)
