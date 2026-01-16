@@ -49,11 +49,11 @@ $$z(t) = a_z \sin\left(\frac{\pi v}{a_x} t\right)$$
 
 **Parameters:**
 - Velocity: $v = 20$ km/h = 5.56 m/s
-- Road length: $a_x = 10$ km
+- Distance traveled: $a_x = 10$ km
 - Lateral amplitude: $a_y = 1$ km
 - Vertical amplitude: $a_z = 1$ km
 - Time step: $\Delta t = 2$ s
-- Total simulation time: $T_{stop} = 6480$ s (road length / velocity)
+- Total simulation time: $T_{stop} = 1800$ s (distance / velocity = 10 km / 20 km/h)
 
 This produces a realistic mountain pass trajectory with combined sinusoidal oscillations in both lateral (Y) and vertical (Z) directions.
 
