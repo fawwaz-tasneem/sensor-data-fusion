@@ -181,32 +181,56 @@ viz = FusionVisualizer(simulation_step)
 viz.set_radar_positions(radar1.pos_s, radar2.pos_s)
 
 def generate_performance_plots():
-    """Generates the 4-panel performance analysis"""
-    fig, axes = plt.subplots(4, 1, figsize=(10, 12), sharex=True)
+    """Generates a 5-panel performance analysis including a 2D Top-Down View"""
+    # Create a figure with a custom grid
+    fig = plt.figure(figsize=(14, 12))
+    gs = fig.add_gridspec(4, 2)
     
-    # Plot 1: Total 3D Error
-    axes[0].plot(time_history, error_history, 'r-', label='3D Position Error')
-    axes[0].set_title("Filter Performance: Total Positioning Error")
-    axes[0].set_ylabel("Error (m)")
-    
-    # Plot 2, 3, 4: Axis Tracking Comparison
-    axes[1].plot(time_history, truth_x_history, 'g-', label='Truth X')
-    axes[1].plot(time_history, filt_x_history, 'b--', label='Est X')
-    axes[1].set_title("X-Axis Tracking")
-    
-    axes[2].plot(time_history, truth_y_history, 'g-', label='Truth Y')
-    axes[2].plot(time_history, filt_y_history, 'b--', label='Est Y')
-    axes[2].set_title("Y-Axis Tracking")
-    
-    # Plot 4: Z Tracking (Demonstrates the disappointment)
-    axes[3].plot(time_history, truth_z_history, 'g-', label='Truth Z')
-    axes[3].plot(time_history, filt_z_history, 'b--', label='Est Z')
-    axes[3].set_title("Z-Axis (Altitude) Estimation")
-    axes[3].set_xlabel("Time (s)")
+    # --- Top-Down View (Spans two rows on the right) ---
+    ax_topdown = fig.add_subplot(gs[0:2, 1])
+    ax_topdown.plot(truth_x_history, truth_y_history, 'g-', label='Ground Truth Path', alpha=0.7)
+    ax_topdown.plot(filt_x_history, filt_y_history, 'b--', label='KF Estimated Path', alpha=0.8)
+    # Mark Radar Positions
+    '''
+    ax_topdown.scatter([radar1.pos_s[0], radar2.pos_s[0]], 
+                       [radar1.pos_s[1], radar2.pos_s[1]], 
+                       c='red', marker='^', label='Radars')
+    '''
+    ax_topdown.set_title("2D Top-Down View (XY Plane)")
+    ax_topdown.set_xlabel("X Position (m)")
+    ax_topdown.set_ylabel("Y Position (m)")
+    ax_topdown.legend()
+    ax_topdown.grid(True)
+    ax_topdown.set_aspect('equal', adjustable='datalim')
 
-    for ax in axes:
-        ax.grid(True)
-        ax.legend(loc='upper right')
+    # --- Plot 1: Total 3D Error (Top Left) ---
+    ax_err = fig.add_subplot(gs[0, 0])
+    ax_err.plot(time_history, error_history, 'r-', label='3D Position Error')
+    ax_err.set_title("Filter Performance: Total Positioning Error")
+    ax_err.set_ylabel("Error (m)")
+    ax_err.grid(True)
+
+    # --- Plot 2: X-Axis Tracking (Middle Left) ---
+    ax_x = fig.add_subplot(gs[1, 0], sharex=ax_err)
+    ax_x.plot(time_history, truth_x_history, 'g-', label='Truth X')
+    ax_x.plot(time_history, filt_x_history, 'b--', label='Est X')
+    ax_x.set_title("X-Axis Tracking")
+    ax_x.grid(True)
+
+    # --- Plot 3: Y-Axis Tracking (Bottom Left) ---
+    ax_y = fig.add_subplot(gs[2, 0], sharex=ax_err)
+    ax_y.plot(time_history, truth_y_history, 'g-', label='Truth Y')
+    ax_y.plot(time_history, filt_y_history, 'b--', label='Est Y')
+    ax_y.set_title("Y-Axis Tracking")
+    ax_y.grid(True)
+
+    # --- Plot 4: Z Tracking (Bottom Span) ---
+    ax_z = fig.add_subplot(gs[3, :])
+    ax_z.plot(time_history, truth_z_history, 'g-', label='Truth Z')
+    ax_z.plot(time_history, filt_z_history, 'b--', label='Est Z')
+    ax_z.set_title("Z-Axis (Altitude) Estimation")
+    ax_z.set_xlabel("Time (s)")
+    ax_z.grid(True)
 
     plt.tight_layout()
     plt.show()
