@@ -5,7 +5,7 @@ class RadarSensor:
     Simulates a Radar measuring Range and Azimuth.
     Note: Standard KF expects linear H. This sensor provides nonlinear z.
     """
-    def __init__(self, x_s, y_s, z_s, sigma_r=10.0, sigma_phi=0.1):
+    def __init__(self, x_s, y_s, z_s, sigma_r, sigma_phi):
         self.pos_s = np.array([x_s, y_s, z_s]) # Radar position
         self.sigma_r = sigma_r                 # 10m
         self.sigma_phi = np.radians(sigma_phi) # Convert 0.1 deg to rad

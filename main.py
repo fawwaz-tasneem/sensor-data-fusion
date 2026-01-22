@@ -6,8 +6,8 @@ from filters.kalman_filter import KalmanFilter
 from visualizer import FusionVisualizer
 
 # --- Setup Parameters ---
-dt = 2.0         # Time step Delta T = 2s
-sigma_a = 0.2    # Process noise standard deviation (m/s^2)
+dt = 10.0         # Time step Delta T = 2s
+sigma_a = 0.2    # Process noise standard deviation (m/s^2) (prediction noise)
 t = 0.0
 Z_AXIS_MEASURED = True  # Set to True to include elevation angle measurement 
 
@@ -24,20 +24,23 @@ sig_phi = np.deg2rad(0.1) # 0.1 degrees converted to radians
 road = MountainPassRoad(dt)
 
 # Dual Radars at specified coordinates (in meters)
-radar1 = RadarSensor(x_s=0, y_s=100000, z_s=10000)
-radar2 = RadarSensor(x_s=100000, y_s=0, z_s=10000)
+radar1 = RadarSensor(x_s=0, y_s=100000, z_s=10000, sigma_r=sig_r, sigma_phi=sig_phi)
+radar2 = RadarSensor(x_s=100000, y_s=0, z_s=10000, sigma_r=sig_r, sigma_phi=sig_phi)
 
 # --- Matrices: 9D Constant Acceleration ---
+# ?? Check if this needs to be changed depending on the dynamics model
 I = np.eye(3)
 O = np.zeros((3,3))
 
 # Transition Matrix F: pos = pos + v*dt + 0.5*a*dt^2 | v = v + a*dt
+# ?? this probably needs to be changed depending on the dynamics model
 f_block = np.array([[1, dt, 0.5*dt**2],
                     [0, 1,  dt],
                     [0, 0,  1]])
 F = np.block([[f_block, O, O], [O, f_block, O], [O, O, f_block]])
 
 # Process Noise Covariance D
+# ?? This probably needs to be changed depending on the dynamics model
 d_block = (sigma_a**2) * np.array([
     [dt**4/4, dt**3/2, dt**2/2],
     [dt**3/2, dt**2,   dt],
@@ -48,7 +51,10 @@ D = np.block([[d_block, O, O], [O, d_block, O], [O, O, d_block]])
 # --- Measurement Matrix H ---
 # Maps Cartesian measurements to the 9D state.
 # If Z_AXIS_MEASURED: H is 3x9 (x, y, z measurements)
-# Otherwise: H is 2x9 (x, y measurements only)
+# Otherwise: H is 2x9 (x, y measurements only) (z axis is modeled in the state but not explciitly measured)
+
+# ?? Check if this needs to be changed depending on the dynamics model (the model should only measure the postion,
+# it should not get the velocity and the acceleration information)
 if Z_AXIS_MEASURED:
     H_cart = np.zeros((3, 9))
     H_cart[0, 0] = 1.0 # px
@@ -60,14 +66,17 @@ else:
     H_cart[1, 3] = 1.0 # py
 
 # --- History Storage for Analysis ---
+# This is alright, requires no changes
 time_history = []
 error_history = []
 truth_x_history, truth_y_history, truth_z_history = [], [], []
 filt_x_history, filt_y_history, filt_z_history = [], [], []
 
 # --- Initialization ---
+# ?? This is where an error might be happening. The state should be initialized by the first measurement, or 0. 
+# I don't think that a 0 or identity matrix makes any sense. It should be initialized by the first measurement 
 x0 = np.zeros((9, 1)) 
-P0 = np.eye(9) * 1000.0 # Large initial uncertainty
+P0 = np.eye(9) * 1.0 # Large initial uncertainty
 kf = KalmanFilter(x0, P0)
 
 def simulation_step():
@@ -81,14 +90,16 @@ def simulation_step():
         return 
     
     # 2. Prediction
-    kf.predict(F, D)
-    gt = road.get_state(t)
+    kf.predict(F, D) # F and D is not initialized correctly maybe
+    gt = road.get_state(t)  # returns ground truth data without adding any noise
     
     # 3. Sensor Measurement (Polar)
     z1_polar = radar1.measure(gt, include_elevation=Z_AXIS_MEASURED) 
     z2_polar = radar2.measure(gt, include_elevation=Z_AXIS_MEASURED)
     
     # 4. CONVERSION: Polar -> Cartesian
+    # This should be done usign a helper function
+
     # No ground truth is fed here; we only use available sensor data.
     if Z_AXIS_MEASURED:
         # Polar: [range, azimuth, elevation]
@@ -120,6 +131,7 @@ def simulation_step():
     # 5. Noise Approximation (R_cart)
     if Z_AXIS_MEASURED:
         def get_R_cart_3d(r, phi, theta):
+            # ?? Why a Jacobian approximation, this is not ekf. CHECK
             # Jacobian approximation for 3D polar to Cartesian conversion
             cos_t = np.cos(theta)
             sin_t = np.sin(theta)
@@ -142,7 +154,8 @@ def simulation_step():
         R_cart1 = get_R_cart_2d(r1, p1)
         R_cart2 = get_R_cart_2d(r2, p2)
 
-    # 6. Filter Update (Sequential Fusion) 
+    # 6. Filter Update (Sequential Fusion)
+    # Change this to concurrent update (SEE SLIDES) 
     # The filter estimates pz based on the 9D state relations.
     kf.update(z1_cart, H_cart, R_cart1)
     kf.update(z2_cart, H_cart, R_cart2)
