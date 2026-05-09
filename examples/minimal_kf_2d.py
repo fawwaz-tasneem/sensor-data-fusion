@@ -20,7 +20,7 @@ import numpy as np
 from sdf.core.state import StateDistribution
 from sdf.filters.kalman import KalmanFilter
 from sdf.motion_models.constant_velocity import ConstantVelocity
-from sdf.scenarios.trajectory import ConstantVelocityTrajectory
+from sdf.scenarios.constant_velocity import ConstantVelocityTrajectory
 from sdf.sensors.cartesian import CartesianPositionSensor
 from sdf.simulation.engine import SimulationEngine
 

@@ -22,7 +22,7 @@ from sdf.core.measurement import Measurement
 from sdf.core.state import StateDistribution
 from sdf.core.track import Track
 from sdf.filters.base import Filter
-from sdf.scenarios.trajectory import Trajectory
+from sdf.scenarios.base import Trajectory
 from sdf.sensors.base import Sensor
 
 

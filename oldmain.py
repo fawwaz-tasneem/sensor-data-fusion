@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from environment import MountainPassRoad
 from sensors import RadarSensor
 from filters.kalman_filter import KalmanFilter
-from visualizer import FusionVisualizer
+from oldvisualiser import FusionVisualizer
 
 # --- Setup Parameters ---
 dt = 10.0         # Time step Delta T = 2s

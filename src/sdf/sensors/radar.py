@@ -81,6 +81,11 @@ class RadarSensor(Sensor):
         if self._dim == 2:
             self.R = np.diag([range_std**2, bearing_std**2])
         else:
+            # The validation above guarantees elevation_std is not None when
+            # dim==3, but the type checker can't follow that correlation.
+            # The assert narrows Optional[float] to float for Pylance and
+            # acts as a defensive runtime check.
+            assert elevation_std is not None
             self.R = np.diag([range_std**2, bearing_std**2, elevation_std**2])
 
     @property
