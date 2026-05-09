@@ -1,25 +1,16 @@
 """
-A Trajectory is a function: time -> true state vector.
+Constant velocity trajectory: a target moving with fixed velocity.
 
-For the minimal example we provide a constant-velocity trajectory. Later
-we'll add piecewise trajectories (CV → CT → CV) for IMM scenarios.
+This is the simplest trajectory and is mainly useful for verification
+(KF should achieve essentially optimal performance on it). For more
+interesting scenarios see piecewise.py and mountain_pass.py.
 """
-#TODO: Separate the abstract base class from its implementations
 from __future__ import annotations
-
-from abc import ABC, abstractmethod
 
 import numpy as np
 
 from sdf.core.state import StateLayout
-
-
-class Trajectory(ABC):
-    layout: StateLayout
-
-    @abstractmethod
-    def state_at(self, t: float) -> np.ndarray:
-        """Return the true state vector at time t."""
+from sdf.scenarios.base import Trajectory
 
 
 class ConstantVelocityTrajectory(Trajectory):
