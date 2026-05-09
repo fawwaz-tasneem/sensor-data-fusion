@@ -41,6 +41,20 @@ class Sensor(ABC):
     def H(self, x: np.ndarray, layout: StateLayout) -> np.ndarray:
         """Jacobian of h at x. Shape: (m, n)."""
 
+    def innovation(
+        self, measurement_value: np.ndarray, predicted_measurement: np.ndarray
+    ) -> np.ndarray:
+        """
+        Compute z - z_pred in measurement space.
+
+        Default is plain subtraction. Sensors with angular components
+        (radar bearing, GMTI bearing) override this to wrap angle
+        differences into [-pi, pi]. This is critical: a naive subtraction
+        across the +pi/-pi branch cut produces a ~6.28 rad innovation when
+        the true difference is small, which destroys the EKF update.
+        """
+        return measurement_value - predicted_measurement
+
     def is_detected(
         self, true_state: np.ndarray, layout: StateLayout, rng: np.random.Generator
     ) -> bool:
