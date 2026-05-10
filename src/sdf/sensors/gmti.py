@@ -2,26 +2,34 @@
 GMTIRadarSensor: Ground Moving Target Indicator radar.
 
 Extends RadarSensor with a range-rate (Doppler) measurement, which is
-what distinguishes GMTI from generic radar (Koch, Sec. 7.2 / Lecture 6,
-pages 4-8).
+what distinguishes GMTI from generic radar.
 
 Measurement vectors:
   2D: (range, bearing, range_rate)
   3D: (range, azimuth, elevation, range_rate)
 
-Range-rate is the radial component of the target's velocity relative to
-the sensor:
-    dot{r} = (p - p_sensor) . v / r = u_hat . v
-where u_hat is the unit line-of-sight from sensor to target.
+Range-rate is the radial component of the target's velocity *relative to
+the sensor*:
+    dot{r} = u_hat . (v_target - v_sensor)
+where u_hat is the unit line-of-sight from sensor to target. For a
+stationary sensor v_sensor = 0 and this collapses to u_hat . v_target.
 
-Because range-rate depends on velocity, the Jacobian H now has nonzero
-columns at velocity indices in addition to position indices.
+Because range-rate depends on velocity, the Jacobian H has nonzero
+columns at velocity indices in addition to position indices. The
+sensor velocity is treated as a *known* parameter (not part of the
+state vector), so it does not enter the Jacobian.
 
-Also implements a state-dependent detection probability through the
-DopplerBlindnessOcclusion model (see sdf.sensors.doppler_occlusion):
-targets with |range-rate| below the sensor's MDV (Minimum Detectable
-Velocity) are likely undetected, modelling the GMTI clutter notch.
-This is critical for the "stopping target" scenario from the lecture.
+Moving sensors:
+  Pass a Platform via the `platform` argument. The sensor's
+  set_time(t) method updates self.position and self.velocity from the
+  platform; if a DopplerBlindnessOcclusion is attached, its
+  sensor_position and sensor_velocity are also synced. Stationary
+  sensors keep self.velocity at zero.
+
+State-dependent detection:
+  Combine with DopplerBlindnessOcclusion (see sdf.sensors.doppler_occlusion)
+  to model the GMTI clutter notch. Targets whose world-frame radial
+  velocity is below the MDV are likely undetected.
 """
 from __future__ import annotations
 
@@ -31,6 +39,8 @@ import numpy as np
 
 from sdf.core.measurement import Measurement
 from sdf.core.state import StateLayout
+from sdf.scenarios.platform import Platform
+from sdf.sensors.doppler_occlusion import DopplerBlindnessOcclusion
 from sdf.sensors.occlusion import OcclusionModel
 from sdf.sensors.radar import RadarSensor, wrap_to_pi
 
@@ -48,6 +58,7 @@ class GMTIRadarSensor(RadarSensor):
         range_rate_std: float = 0.5,
         detection_prob: float = 1.0,
         occlusion_model: Optional[OcclusionModel] = None,
+        platform: Optional[Platform] = None,
     ):
         # We deliberately *don't* call RadarSensor.__init__ for R because
         # GMTI's R is one row/col larger. We do everything else manually
@@ -63,8 +74,10 @@ class GMTIRadarSensor(RadarSensor):
 
         self.sensor_id = sensor_id
         self.position = position
+        self.velocity = np.zeros(self._dim)  # zero unless platform updates it
         self.detection_prob = detection_prob
         self.occlusion_model = occlusion_model
+        self.platform = platform
 
         self.range_std = range_std
         self.bearing_std = bearing_std
@@ -74,10 +87,30 @@ class GMTIRadarSensor(RadarSensor):
         if self._dim == 2:
             self.R = np.diag([range_std**2, bearing_std**2, range_rate_std**2])
         else:
-            assert elevation_std is not None  # narrowed by guard above
+            assert elevation_std is not None
             self.R = np.diag(
                 [range_std**2, bearing_std**2, elevation_std**2, range_rate_std**2]
             )
+
+        # If a platform was provided, initialize position/velocity from it
+        # at t=0. (Subsequent set_time calls will keep these in sync.)
+        if self.platform is not None:
+            if self.platform.dim != self._dim:
+                raise ValueError(
+                    f"platform dim {self.platform.dim} != sensor dim {self._dim}"
+                )
+            self.set_time(0.0)
+
+    def set_time(self, t: float) -> None:
+        """Update sensor position and velocity from the platform at time t."""
+        if self.platform is None:
+            return
+        self.position = self.platform.position_at(t)
+        self.velocity = self.platform.velocity_at(t)
+        # Keep DopplerBlindnessOcclusion in sync.
+        if isinstance(self.occlusion_model, DopplerBlindnessOcclusion):
+            self.occlusion_model.sensor_position = self.position
+            self.occlusion_model.sensor_velocity = self.velocity
 
     @property
     def measurement_dim(self) -> int:
@@ -91,14 +124,15 @@ class GMTIRadarSensor(RadarSensor):
         Returns:
           2D: (r, az, dot{r})
           3D: (r, az, el, dot{r})
+
+        For a moving sensor, dot{r} = u_hat . (v_target - v_sensor). For a
+        stationary sensor v_sensor = 0 and this collapses to u_hat . v_target.
         """
         if layout.dim != self._dim:
             raise ValueError(
                 f"GMTI is {self._dim}D but layout is {layout.dim}D"
             )
 
-        # Reuse RadarSensor.h logic by computing position-only measurement,
-        # then append range-rate.
         position = layout.position(x)
         velocity = layout.velocity(x)
         d = position - self.position
@@ -108,7 +142,9 @@ class GMTIRadarSensor(RadarSensor):
                 f"Target essentially at sensor (r={r:.2e}); GMTI undefined"
             )
         u_hat = d / r
-        range_rate = float(u_hat @ velocity)
+        # Range-rate of the target relative to the sensor.
+        relative_velocity = velocity - self.velocity
+        range_rate = float(u_hat @ relative_velocity)
 
         if self._dim == 2:
             azimuth = np.arctan2(d[1], d[0])
@@ -123,11 +159,14 @@ class GMTIRadarSensor(RadarSensor):
         """
         Jacobian. Position-block is identical to RadarSensor's H (range,
         bearing[, elevation] only depend on position). Range-rate adds a
-        new row that depends on BOTH position AND velocity.
+        new row that depends on BOTH position AND velocity. Sensor velocity
+        is treated as a known parameter (not part of state x), so it does
+        not appear in the Jacobian directly — but it does shift the
+        effective relative velocity used in the position-derivative.
 
-        For range-rate dot{r} = u_hat . v with u_hat = d/r:
-          d(dot{r}) / d(p) = (v - dot{r} * u_hat) / r  (a row vector of length dim)
-          d(dot{r}) / d(v) = u_hat                     (a row vector of length dim)
+        For range-rate dot{r} = u_hat . (v_target - v_sensor) with u_hat = d/r:
+          d(dot{r}) / d(p_target) = ((v_t - v_s) - dot{r} * u_hat) / r
+          d(dot{r}) / d(v_target) = u_hat
         """
         position = layout.position(x)
         velocity = layout.velocity(x)
@@ -142,15 +181,14 @@ class GMTIRadarSensor(RadarSensor):
 
         # Reuse the radar position-block by calling parent's H. The base
         # class returns shape (dim, n_state) with only position columns set.
-        H_radar = super().H(x, layout)  # shape (dim, n_state)
+        H_radar = super().H(x, layout)
 
-        # Build the range-rate row.
+        # Build the range-rate row using the relative velocity.
         u_hat = d / r
-        range_rate = float(u_hat @ velocity)
-        # Position-block of the range-rate row: (v - dot{r} * u_hat) / r
-        rr_pos_block = (velocity - range_rate * u_hat) / r  # length dim
-        # Velocity-block of the range-rate row: u_hat
-        rr_vel_block = u_hat  # length dim
+        relative_velocity = velocity - self.velocity
+        range_rate = float(u_hat @ relative_velocity)
+        rr_pos_block = (relative_velocity - range_rate * u_hat) / r
+        rr_vel_block = u_hat
 
         rr_row = np.zeros(n_state)
         for i, idx in enumerate(layout.position_idx):
@@ -158,7 +196,6 @@ class GMTIRadarSensor(RadarSensor):
         for i, idx in enumerate(layout.velocity_idx):
             rr_row[idx] = rr_vel_block[i]
 
-        # Stack: radar rows on top, range-rate row at the bottom.
         H = np.vstack([H_radar, rr_row[np.newaxis, :]])
         return H
 
