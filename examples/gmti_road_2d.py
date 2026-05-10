@@ -12,7 +12,7 @@ This reproduces the "stopping target" scenario discussed in Lecture 6
 We compare three configurations:
   A. Plain EKF + GMTI (no road info, no Doppler-blindness modeling).
   B. Plain EKF + GMTI WITH Doppler blindness simulated (just realistic).
-  C. Road-aided EKF + GMTI WITH Doppler blindness — the full Koch setup.
+  C. Road-aided EKF + GMTI WITH Doppler blindness
 
 Vehicle moves along a 2D road, then stops for a stretch (entering the
 clutter notch where GMTI loses detections), then resumes.
@@ -180,7 +180,7 @@ def main() -> None:
     # Plot.
     out_dir = os.path.join(os.path.dirname(__file__), "..", "results")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "koch_gmti_road_2d.png")
+    out_path = os.path.join(out_dir, "gmti_road_2d.png")
 
     fig, axes = plt.subplots(2, 1, figsize=(12, 8))
 

@@ -24,7 +24,7 @@ What this demonstrates:
      reducing cross-track error specifically.
 
 Outputs:
-  results/koch_road_map_2d.png — top-down plot with road, truth, and
+  results/road_map_2d.png — top-down plot with road, truth, and
                                   both EKF estimates.
 """
 from __future__ import annotations
@@ -191,7 +191,7 @@ def main() -> None:
     # Plot.
     out_dir = os.path.join(os.path.dirname(__file__), "..", "results")
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "koch_road_map_2d.png")
+    out_path = os.path.join(out_dir, "road_map_2d.png")
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
@@ -214,7 +214,7 @@ def main() -> None:
                s=80, c="purple", label="Radar", zorder=5)
     ax.set_xlabel("x [m]")
     ax.set_ylabel("y [m]")
-    ax.set_title("Koch road-aided tracking — top-down view")
+    ax.set_title("Road-aided tracking — top-down view")
     ax.legend(loc="upper right", fontsize=8)
     ax.set_aspect("equal", adjustable="datalim")
     ax.grid(True, alpha=0.3)
