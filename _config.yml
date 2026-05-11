@@ -1,0 +1,49 @@
+# GitHub Pages configuration.
+#
+# Pages serves this repository's `main` branch from the root; Jekyll
+# renders README.md as the site index. We use the `minima` theme,
+# which is one of the small set GitHub Pages supports natively without
+# a custom Gemfile.
+
+title: "SDF Tracking Framework"
+description: >
+  A Python framework for sensor data fusion and target tracking,
+  built around Koch's tracking formulations. Modular components,
+  road-aided EKF through tunnels, interactive Dash dashboard.
+author: "Fawwaz Bin Tasneem"
+
+theme: minima
+minima:
+  skin: classic
+
+# README.md serves as the index page. Don't include the dashboard
+# directory's HTML/MP4 artefacts or the test scaffolding.
+exclude:
+  - .pytest_cache/
+  - __pycache__/
+  - "*.egg-info/"
+  - dashboard/tests/
+  - tests/
+  - "*.tar.gz"
+  - "*.mp4"
+  - Gemfile
+  - Gemfile.lock
+  - vendor/
+
+# Markdown processor: kramdown is GitHub Pages' default.
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+# Construct absolute paths correctly if the project is hosted
+# under a username's repo (i.e. as user.github.io/repo-name).
+# Override this via Pages settings if needed.
+# baseurl: "/sensor-fusion-tracking"
+
+plugins:
+  - jekyll-relative-links
+
+relative_links:
+  enabled: true
+  collections: false

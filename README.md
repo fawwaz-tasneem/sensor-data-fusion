@@ -224,11 +224,13 @@ Adding a new filter, sensor, motion model, or trajectory is a single
 new class implementing its ABC, plus tests; the existing components
 don't need to know it exists.
 
+## Disclaimer
+AI tools such as Gemini and Claude were used in the development of this project.
+
 ## Attribution
 
 Developed by **Fawwaz Bin Tasneem** (MSc CS, University of Bonn) as a
-HiWi portfolio project for **Prof. Wolfgang Koch** (University of Bonn /
-Fraunhofer FKIE). The formulations follow Koch's *Tracking and Sensor
+The formulations follow Prof. Wolfgang Koch's *Tracking and Sensor
 Data Fusion* and the framework was developed alongside his SDF course
 material.
 
