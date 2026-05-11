@@ -22,5 +22,5 @@ app = ["streamlit>=1.28", "plotly>=5.0"]
 where = ["src"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
+testpaths = ["tests", "dashboard/tests"]
+pythonpath = ["src", "."]
