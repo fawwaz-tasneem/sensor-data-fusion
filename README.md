@@ -228,10 +228,7 @@ AI tools such as Gemini and Claude were used in the development of this project.
 
 ## Attribution
 
-Developed by **Fawwaz Bin Tasneem** (MSc CS, University of Bonn) as a
-The formulations follow Prof. Wolfgang Koch's *Tracking and Sensor
-Data Fusion* and the framework was developed alongside his SDF course
-material.
+Developed by **Fawwaz Bin Tasneem** (MSc CS, University of Bonn) as a portfolio project, extending the work done as a part of the course **Introduction to Sensor Data Fusion**.
 
 Built iteratively across six versions; the architecture (state layout,
 small interfaces, plug-compatible components) settled around v3 and has
