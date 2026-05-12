@@ -1,9 +1,8 @@
 # SDF Tracking Framework
 
 A Python framework for sensor data fusion and target tracking. Built around the
-formulations in Koch's *Tracking and Sensor Data Fusion* and Bar-Shalom's
-*Estimation with Applications to Tracking and Navigation*. Every component
-— motion model, sensor, occlusion model, filter, trajectory, platform —
+formulations in Prof. Wolfgang Koch's *Tracking and Sensor Data Fusion*. Every component
+— motion model, sensor, filter, trajectory, platform —
 sits behind a small explicit interface and is plug-compatible with the rest.
 
 ![Mountain pass with tunnel — four-panel result](results/mountain_pass_with_tunnel.png)
