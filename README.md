@@ -1,22 +1,22 @@
 # SDF Tracking Framework
 
 A Python framework for sensor data fusion and target tracking. Built around the
-formulations in Prof. Wolfgang Koch's *Tracking and Sensor Data Fusion*. Every component
-— motion model, sensor, filter, trajectory, platform —
-sits behind a small explicit interface and is plug-compatible with the rest.
+formulations in Prof. Wolfgang Koch's *Tracking and Sensor Data Fusion*. Every
+component — motion model, sensor, filter, trajectory, platform — sits behind a
+small explicit interface and is plug-compatible with the rest.
 
 ![Mountain pass with tunnel — four-panel result](results/mountain_pass_with_tunnel.png)
 
-The headline scenario: a 3D mountain pass road with a 2.7 km tunnel midway,
-two stationary radars at (0, 10 km, 100 m) and (10 km, 0, 100 m), and the
-target traversing the road at constant speed. Inside the tunnel both radars
-lose the target; a road-aided EKF keeps the cross-track and altitude
-estimates close to the manifold while a plain EKF coasts on motion-model
-prediction alone and drifts. The error spike during the gap is the
-demonstration; the recovery on re-acquisition is the same filter design,
-no per-scenario tuning.
+The headline scenario: a 3D mountain-pass road with a tunnel midway, two
+stationary radars, and a target traversing the road. Inside the tunnel both
+radars lose the target; with the road map enabled, a fictitious cross-track
+measurement keeps the estimate on the road manifold (altitude and lateral
+position constrained) while a plain EKF coasts on motion-model prediction alone
+and drifts off. Re-acquisition uses the same filter design — no per-scenario
+tuning. You can rebuild this end to end in the dashboard (mountain-pass
+trajectory + tunnel occlusion + *Enable road map*).
 
-> 219 tests passing · Python 3.10+ · MIT license
+> 455 tests passing · Python 3.10+ · MIT license
 
 ---
 
@@ -24,86 +24,119 @@ no per-scenario tuning.
 
 ```bash
 git clone <repo>
-cd sensor-fusion-tracking
+cd sensor-data-fusion
 pip install -e .
 
-# Run the headline example
-python examples/road_with_tunnel.py
-# → results/mountain_pass_with_tunnel.png
+# Run an example (writes a PNG into results/)
+python examples/mountain_pass_ekf_3d.py
+python examples/imm_aircraft.py
 
 # Run the full test suite
-pytest -v
+pytest -q
 ```
 
 To launch the interactive scenario builder dashboard:
 
 ```bash
-pip install dash plotly playwright    # not part of the core deps
-python -m dashboard                   # serves on http://127.0.0.1:8050
+pip install dash plotly        # not part of the core deps
+python -m dashboard            # serves on http://127.0.0.1:8050
 ```
+
+The two flagship demos — the **mountain-pass tunnel** (road-aided tracking
+through a sensor blackout) and the **fighter-jet IMM** (three motion modes
+handing off across hard maneuvers) — are both built in the dashboard; see
+*Dashboard* below.
 
 ## What it does
 
-This framework implements the canonical building blocks of sensor data
-fusion, in a way meant to be read as much as run. If you've taken a
-tracking course, the names and roles will be familiar; if you haven't,
-the inline documentation tries to bridge to the textbook.
+This framework implements the canonical building blocks of sensor data fusion,
+in a way meant to be read as much as run. If you've taken a tracking course, the
+names and roles will be familiar; if you haven't, the inline documentation tries
+to bridge to the textbook.
 
-The novel pieces are:
+Highlights:
 
-- **`TerrainOcclusion` / `TunnelOcclusion`** — a road-aligned tubular
-  occlusion model. Anchored to a `PolygonalRoadMap` by arc-length range,
-  so the same tunnel definition works on straight and curved roads in 2D
-  or 3D. Composes with `DopplerBlindnessOcclusion` via `CompositeOcclusion`.
-- **`PolygonalRoadMap`** with explicit per-segment arc length (separate
-  from the chord length), so the discretization-error variance σ_d is
-  computed correctly when the polygon under-samples a curved road.
-- **`RoadAidedExtendedKalmanFilter`** — EKF with a fictitious cross-track
-  measurement from the road map applied at every step, regardless of
-  whether the sensors fired. The mechanism by which the filter coasts
-  through tunnels.
-- **An interactive Dash dashboard** (under `dashboard/`) that lets you
-  configure the trajectory, sensors, occlusion, filter, and road map
-  through forms, run the simulation, and play back the result in 3D with
-  a time slider — plus export the playback as an MP4.
+- **Road-map–aided tracking.** A `PolygonalRoadMap` with explicit per-segment
+  arc length (separate from the chord length), so the discretization-error
+  variance σ_d is computed correctly when the polygon under-samples a curved
+  road. Enabling the road map fuses a fictitious cross-track measurement every
+  step (Koch's formulation), which keeps the estimate on the road through a
+  sensor gap — the mechanism behind the tunnel demo.
+- **A three-mode IMM on a unified state.** Constant-velocity, coordinated-turn
+  (with an *estimated* turn rate, so one model handles left and right turns),
+  and constant-acceleration modes all share one state vector
+  `[x, vx, ax, y, vy, ay, (z, vz, az,) ω]`, so the IMM mixes them directly — in
+  2D **or** 3D. The dashboard shows the live mode probabilities, so you can
+  watch the filter decide which dynamics the target is in.
+- **Occlusion as a first-class, composable concept.** `TunnelOcclusion`
+  (a road-aligned tube, anchored by arc-length so it works on straight or curved
+  roads in 2D/3D), `DopplerBlindnessOcclusion` (the GMTI clutter notch), and
+  `CompositeOcclusion` (OR-composition) all plug into the same sensor pipeline.
+- **An azimuth-only radar** (range + bearing, *no* elevation): a classic 2D
+  surveillance radar whose measurements are independent of height, so altitude
+  is genuinely unobservable from it — a clean motivation for road-aided altitude
+  tracking.
+- **A moving GMTI platform** with selectable flight patterns (straight, circle,
+  racetrack), whose motion shifts the Doppler clutter notch.
+- **An interactive Dash dashboard** that lets you configure the scenario through
+  forms, run it, and play it back in 3D — with evaluation metrics (RMSE, ANEES
+  consistency), IMM mode probabilities, and the ground-truth clutter notch
+  plotted alongside.
 
 ## Components
 
 ### Motion models (`src/sdf/motion_models/`)
 
-| Class                       | State                              | Dim     | Process noise |
-| --------------------------- | ---------------------------------- | ------- | ------------- |
-| `ConstantVelocity`          | `[x, vx, y, vy, (z, vz)]`          | 2D / 3D | DWN-A         |
-| `ConstantAcceleration`      | `[x, vx, ax, y, vy, ay, ...]`      | 2D / 3D | DWN-J         |
-| `CoordinatedTurn`           | `[x, vx, y, vy]`, ω fixed          | 2D      | DWN-A         |
-| `CoordinatedTurnUnknown`    | `[x, vx, y, vy, ω]`                | 2D      | DWN-A + ω RW  |
+| Class                       | State                                    | Dim     | Process noise |
+| --------------------------- | ---------------------------------------- | ------- | ------------- |
+| `ConstantVelocity`          | `[x, vx, y, vy, (z, vz)]`                | 2D / 3D | DWN-A         |
+| `ConstantAcceleration`      | `[x, vx, ax, y, vy, ay, …]`              | 2D / 3D | DWN-J         |
+| `CoordinatedTurn`           | `[x, vx, y, vy]`, ω fixed                | 2D      | DWN-A         |
+| `CoordinatedTurnUnknown`    | `[x, vx, y, vy, ω]`                      | 2D      | DWN-A + ω RW  |
+| `UnifiedCV / CA / CT`       | shared `[…, ax, ay, (az,) ω]`            | 2D / 3D | per mode      |
+
+The `Unified*` set is the IMM bank: all three share one `StateLayout` so they
+mix cleanly. Each mode uses the components it models and zeros the rest (CV zeros
+acceleration and ω; CA zeros ω; CT does a horizontal coordinated turn at ω with
+the vertical axis under constant velocity).
 
 ### Sensors (`src/sdf/sensors/`)
 
-- `CartesianPositionSensor` — linear; direct noisy position
-- `RadarSensor` — range / bearing / (elevation), with proper angle-wrap on innovation
-- `GMTIRadarSensor` — radar + range-rate, supports a moving `Platform`
+- `CartesianPositionSensor` — linear; direct noisy position (the one sensor
+  valid with the plain `KalmanFilter`)
+- `RadarSensor` — range / bearing / (elevation), with proper angle-wrap on the
+  innovation
+- `AzimuthOnlyRadarSensor` — range + bearing only, no elevation; altitude
+  unobservable
+- `GMTIRadarSensor` — radar + range-rate; rides a moving `Platform` and keeps an
+  attached Doppler notch in sync with its own motion
 
 Each sensor optionally carries an `OcclusionModel`:
 
-- `TunnelOcclusion` — target in a road-aligned tube → no measurement
-- `DopplerBlindnessOcclusion` — radial-velocity-dependent P_D suppression
-  for GMTI clutter notches
+- `TunnelOcclusion` — target inside a road-aligned tube → no measurement
+- `DopplerBlindnessOcclusion` — radial-velocity-dependent P_D suppression (the
+  GMTI clutter notch)
 - `CompositeOcclusion` — OR-composition of several models
 
 ### Filters (`src/sdf/filters/`)
 
 - `KalmanFilter` — linear measurements only
-- `ExtendedKalmanFilter` — local linearization for radar / GMTI
+- `ExtendedKalmanFilter` — local linearization for radar / GMTI / azimuth radar
 - `RoadAidedExtendedKalmanFilter` — EKF augmented by a road-map cross-track
-  measurement, applied per step independently of sensor returns
-- `IMMFilter` — Interacting Multiple Models with arbitrary sub-filter list
+  measurement (also exposed as the standalone `road_cross_track_update`, which
+  the dashboard applies to whichever filter you choose when the road map is on)
+- `IMMFilter` — Interacting Multiple Models over an arbitrary sub-filter list;
+  the dashboard wires it as the unified CV + CT + CA bank
 
 ### Scenarios (`src/sdf/scenarios/`)
 
-- `ConstantVelocityTrajectory`, `MountainPassTrajectory` — analytic truth
-- `PolygonalRoadMap` — polygon nodes with surveyed positions, declared σ
-  on node coords, and explicit per-segment arc lengths
+- `ConstantVelocityTrajectory` (2D/3D), `MountainPassTrajectory` (3D),
+  `FighterJetTrajectory` (2D/3D) — analytic truth
+- `FighterJetTrajectory` flies level → hard left break → accelerate + zoom climb
+  → harder right break → decelerate + dive → level: the maneuver bank that makes
+  a single motion model fail and the IMM shine
+- `PolygonalRoadMap` — polygon nodes with surveyed positions, declared σ on node
+  coords, and explicit per-segment arc lengths
 - Sensor platforms: `StationaryPlatform`, `StraightFlight`, `CircleFlight`,
   `RacetrackFlight` — analytic position and velocity at any t
 
@@ -112,127 +145,137 @@ Each sensor optionally carries an `OcclusionModel`:
 - `tunnel_wireframe_segments(tunnel)` — backend-agnostic line geometry
 - `draw_tunnel_wireframe(ax, tunnel)` — matplotlib helper for 2D or 3D axes
 
-## Examples
-
-`examples/` contains runnable scripts, each writing a PNG into `results/`:
-
-| Example                              | What it shows                                    |
-| ------------------------------------ | ------------------------------------------------ |
-| `minimal_kf_2d.py`                   | KF + Cartesian sensor, sanity baseline           |
-| `ekf_two_radars_3d.py`               | EKF, 3D CV target, two stationary radars         |
-| `mountain_pass_two_radars.py`        | 3D winding road, EKF, no road map                |
-| `road_map_aided_tracking.py`         | Same scenario + road-aided EKF for comparison    |
-| `road_with_tunnel.py`                | Headline: mountain pass + tunnel, plain vs aided |
-| `gmti_with_road_constraint.py`       | GMTI Doppler blindness on a stopping target      |
-| `gmti_awacs_road.py`                 | GMTI on AWACS racetrack + 2 radars + road        |
-| `imm_aircraft.py`                    | IMM (CV + CT-left + CT-right) on a maneuvering target |
-
 ## Dashboard
 
 The interactive dashboard sits in the top-level `dashboard/` directory
-(deliberately outside the `sdf` package, to keep Dash and Plotly out of
-the core dependency tree). It lets you configure a scenario through form
-fields, run it, and watch the playback.
+(deliberately outside the `sdf` package, to keep Dash and Plotly out of the core
+dependency tree). It assembles a scenario from form fields, runs it, and plays
+it back.
 
-![Dashboard scenario builder](results/dashboard_scenario_builder.png)
+The scenario builder covers:
 
-The scenario builder covers trajectory type and parameters, motion model
-type and parameters, an add/remove sensor list (each row is its own
-sensor type with its own form), occlusion model, filter type, road map
-density and node-position uncertainty, plus simulation seed and time step.
+- **Trajectory** — mountain pass (3D), constant velocity (2D/3D), or fighter jet
+  (2D/3D)
+- **Motion model** — CV / CA / CT (ignored when the IMM filter is selected,
+  which defines its own bank)
+- **Sensors** — an add/remove list; each row is its own type (Cartesian, radar,
+  azimuth-only radar, GMTI) with its own form. A GMTI row can ride a **flight
+  pattern** (stationary / straight / circle / racetrack).
+- **Occlusion** — none, tunnel, or Doppler clutter notch
+- **Filter** — KF, EKF, or the three-mode IMM
+- **Road map** — enabling it turns on road-aided filtering (a fictitious
+  cross-track measurement) and positions any tunnel; node count and σ are
+  adjustable
+- **Simulation** — seed and time step
 
-Clicking *Run simulation* produces:
+Clicking *Run simulation* produces a 3D Plotly scene (truth, estimate, sensors,
+road map, tunnel; sensors animate if they're on a moving platform) plus side
+panels:
 
-- A 3D Plotly scene with truth, estimate, sensors, road map, and tunnel,
-  animated frame-by-frame via play/pause and a time slider
-- Three side panels: position error vs time, altitude profile, sensor
-  detection timeline
-- An *Export MP4* button (requires `ffmpeg` on PATH) that writes the
-  playback to a downloadable video file
+- a **metrics table** — RMSE (overall / horizontal / vertical / per-axis),
+  velocity RMSE, mean/max/final error, **ANEES** consistency (over-confident /
+  consistent / over-cautious), and detection rate
+- **position error vs time** (with the RMSE drawn as a reference line)
+- **altitude** (truth vs estimate)
+- **sensor detection** timeline
+- **IMM mode probabilities** (when the IMM is selected) — the CV / CT / CA bands
+  handing off across a maneuver
+- **clutter notch ground truth** (when a Doppler occlusion is present) — the
+  true detection factor over time with every missed scan marked, so dropouts
+  line up with the notch
 
-## Known issues
+Invalid configurations fail with a clear message (e.g. a linear KF on a
+nonlinear sensor warns rather than silently diverging; a dimension mismatch says
+exactly what to change; a blank form field names itself). An *Export MP4* button
+(requires `ffmpeg` on PATH) writes the playback to a downloadable video.
 
-The dashboard's scenario builder is more capable than it is correct.
-Specifically, in its current state:
+## Examples
 
-1. The road map is built and visualized when *Enable road map* is checked,
-   but the road-aided EKF doesn't fully consume it through the dashboard
-   path — runs that work cleanly via `examples/road_with_tunnel.py` show
-   2 km drift through the dashboard. The example is the reference;
-   the dashboard runner needs an audit.
-2. Side panels (error, altitude, detection) don't sync with the 3D
-   playback's time slider — they show full time series and don't move
-   with playback. Fixing this means combining all panels into one
-   Plotly subplots figure so frames are shared.
-3. Only `ConstantVelocity` works as the motion model from the dashboard;
-   other motion models break at runtime due to state-layout mismatches
-   between the trajectory and the filter.
-4. Changing the road map's node-position uncertainty (`sigma_nodes`) has
-   no observable effect on the tracking error. Most likely a symptom of
-   issue 1.
-5. The configured scenario parameters aren't displayed under the playback;
-   you have to remember what you set.
+`examples/` contains runnable scripts; most write a PNG into `results/`:
 
-These are tracked for v7. The core framework (everything under `src/sdf/`)
-is verified by the 219-test suite and the example scripts; the dashboard
-is a viewer on top of that, and its bugs are in the viewer layer.
+| Example                         | What it shows                                      |
+| ------------------------------- | -------------------------------------------------- |
+| `minimal_kf_2d.py`              | KF + Cartesian sensor, sanity baseline             |
+| `ekf_radar_2d.py`               | EKF + a single radar, 2D                            |
+| `ekf_two_radars_3d.py`          | EKF, 3D CV target, two stationary radars           |
+| `mountain_pass_ekf_3d.py`       | 3D winding road, EKF, two radars                   |
+| `road_map_2d.py`                | Road-aided EKF on a 2D road                         |
+| `gmti_road_2d.py`               | GMTI range-rate tracking on a 2D road              |
+| `gmti_with_road_constraint.py`  | GMTI Doppler blindness on a stopping target        |
+| `gmti_awacs_road.py`            | GMTI on an AWACS racetrack + 2 radars + road       |
+| `imm_aircraft.py`               | IMM on a maneuvering aircraft                       |
+
+## Limitations
+
+The dashboard's side panels show the full time series; they do not yet scrub in
+lock-step with the 3D playback's time slider. The configured scenario parameters
+also aren't echoed under the playback. These are viewer conveniences, not
+correctness issues — every combination of options runs and is validated (see the
+combination test below).
 
 ## Layout
 
 ```
 src/sdf/                        Core framework (no Dash dependency)
 ├── core/                       StateLayout, StateDistribution, Measurement, Track
-├── motion_models/              CV, CA, CT (known and unknown ω)
-├── sensors/                    Cartesian, Radar, GMTI, occlusion models
+├── motion_models/              CV, CA, CT (known/unknown ω), unified CV/CT/CA
+├── sensors/                    Cartesian, Radar, AzimuthRadar, GMTI, occlusion
 ├── filters/                    KF, EKF, RoadAidedEKF, IMM
-├── scenarios/                  Trajectories, road map, platforms
+├── scenarios/                  Trajectories (incl. fighter jet), road map, platforms
 └── viz/                        Visualization helpers (matplotlib + geometry)
 
 examples/                       Runnable demonstration scripts
-tests/                          Framework tests (137, all passing)
+tests/                          Framework tests (187)
 dashboard/                      Plotly Dash app — outside the package
 ├── components/                 Spec-based component registries
 ├── ui/                         Form generator + playback view
-├── tests/                      Dashboard tests (82, all passing)
+├── tests/                      Dashboard tests (268, incl. an exhaustive
+│                               option-combination harness)
 ├── schema.py                   ParameterSpec / ComponentSpec / ComponentChoice
 ├── simulation.py               Config dict → SimulationResult runner
 ├── mp4_export.py               matplotlib + ffmpeg MP4 rendering
 ├── app.py                      Dash app + callbacks
 └── __main__.py                 python -m dashboard entry point
 
-results/                        Generated PNGs and MP4s (gitignored content)
+results/                        Generated PNGs (MP4s gitignored)
 ```
 
 ## Architecture principles
 
-Each layer talks to its neighbours through a single interface. A
-`MotionModel` only owes the rest of the framework `f(x, dt)`, `F(x, dt)`,
-and `Q(dt)`, plus a `StateLayout` describing which indices are which.
-A `Sensor` owes `h(x)`, `H(x)`, and a `measure()` method that handles
-detection probability and occlusion uniformly. A `Filter` consumes both
-through their interfaces and never knows about ground truth.
+Each layer talks to its neighbours through a single interface. A `MotionModel`
+only owes the rest of the framework `f(x, dt)`, `F(x, dt)`, and `Q(dt)`, plus a
+`StateLayout` describing which indices are which. A `Sensor` owes `h(x)`, `H(x)`,
+and a `measure()` method that handles detection probability and occlusion
+uniformly. A `Filter` consumes both through their interfaces and never knows
+about ground truth.
 
-`StateLayout` is the small piece of cleverness that holds it together.
-It decouples state-vector indices from semantics, so a sensor that needs
-"the position part of the state" can ask the layout for `position_idx`
-rather than hardcoding `(0, 2)` or `(0, 2, 4)`. This is what makes the
-same `Sensor` class work for a 2D CV target and a 3D CA target without
-caring about the difference.
+`StateLayout` is the small piece of cleverness that holds it together. It
+decouples state-vector indices from semantics, so a sensor that needs "the
+position part of the state" can ask the layout for `position_idx` rather than
+hardcoding `(0, 2)` or `(0, 2, 4)`. This is what makes the same `Sensor` class
+work for a 2D CV target and a 3D CA target — and what lets the unified IMM bank
+mix three different dynamics in one vector.
 
-Adding a new filter, sensor, motion model, or trajectory is a single
-new class implementing its ABC, plus tests; the existing components
-don't need to know it exists.
+Adding a new filter, sensor, motion model, or trajectory is a single new class
+implementing its ABC, plus tests; the existing components don't need to know it
+exists. The dashboard's exhaustive combination test runs (almost) every
+trajectory × motion model × sensor × occlusion × filter × road-map combination
+at default parameters and validates each result against independently recomputed
+expectations, so a fix in one option can't silently break another.
 
 ## Disclaimer
+
 AI tools such as Gemini and Claude were used in the development of this project.
 
 ## Attribution
 
-Developed by **Fawwaz Bin Tasneem** (MSc CS, University of Bonn) as a portfolio project, extending the work done as a part of the course **Introduction to Sensor Data Fusion**.
+Developed by **Fawwaz Bin Tasneem** (MSc CS, University of Bonn) as a portfolio
+project, extending the work done as a part of the course **Introduction to
+Sensor Data Fusion**.
 
-Built iteratively across six versions; the architecture (state layout,
-small interfaces, plug-compatible components) settled around v3 and has
-stayed stable since. Each release ran a green test suite end to end.
+The architecture (state layout, small interfaces, plug-compatible components)
+settled early and has stayed stable; each release ran a green test suite end to
+end.
 
 ## License
 
@@ -242,6 +285,6 @@ MIT.
 
 <sub>**Publishing to GitHub Pages.** This repository is structured to serve as
 its own Pages site: `_config.yml` at the root configures Jekyll with the
-`minima` theme, and `README.md` is rendered as the index. To enable, go
-to *Settings → Pages*, set Source to *Deploy from a branch*, branch
-`main`, folder `/ (root)`. No workflow file is needed.</sub>
+`minima` theme, and `README.md` is rendered as the index. To enable, go to
+*Settings → Pages*, set Source to *Deploy from a branch*, branch `main`, folder
+`/ (root)`. No workflow file is needed.</sub>
