@@ -37,6 +37,11 @@ class Sensor(ABC):
     detection_prob: float
     occlusion_model: Optional[OcclusionModel]
 
+    # Whether h(x) = H x exactly (a linear measurement). Only linear sensors
+    # are valid with the plain KalmanFilter; nonlinear ones (radar, GMTI)
+    # need the EKF. Subclasses override this.
+    is_linear: bool = False
+
     @property
     @abstractmethod
     def measurement_dim(self) -> int: ...

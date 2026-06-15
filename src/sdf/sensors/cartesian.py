@@ -24,6 +24,9 @@ class CartesianPositionSensor(Sensor):
     position rows. This makes the KF update step linear and exact.
     """
 
+    # h(x) = H x exactly — the one sensor that is valid with the linear KF.
+    is_linear = True
+
     def __init__(
         self,
         sensor_id: str,

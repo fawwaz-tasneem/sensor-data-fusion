@@ -209,6 +209,37 @@ class TestTunnelOcclusionComposition:
         ]
         assert any(not r for r in results)
 
+    def test_composite_runs_through_sensor_pipeline(self):
+        """
+        Regression: a sensor carrying a CompositeOcclusion must work through
+        the full measure() pipeline. base.is_detected() passes rng positionally
+        to is_occluded(), so CompositeOcclusion must accept and forward rng —
+        otherwise every measurement with a composite occlusion raises TypeError.
+        """
+        from sdf.sensors import CartesianPositionSensor
+
+        road = _straight_road()
+        tunnel = TunnelOcclusion(road, l_in=400.0, l_out=600.0, radius=10.0)
+        doppler = DopplerBlindnessOcclusion(
+            sensor_position=np.array([0.0, -1000.0]), mdv=3.0, pd_floor=0.05
+        )
+        composite = CompositeOcclusion([tunnel, doppler])
+        layout = StateLayout(dim=2, position_idx=(0, 2), velocity_idx=(1, 3))
+        sensor = CartesianPositionSensor(
+            sensor_id="c1", dim=2, noise_std=1.0, occlusion_model=composite
+        )
+        rng = np.random.default_rng(0)
+
+        # Inside the tunnel: occluded -> no measurement.
+        in_tunnel = np.array([500.0, 30.0, 0.0, 0.0])
+        assert sensor.measure(in_tunnel, layout, t=1.0, rng=rng) is None
+
+        # Outside, moving fast radially: at least one of many draws detects.
+        outside = np.array([100.0, 100.0, 100.0, 0.0])
+        got = [sensor.measure(outside, layout, t=1.0, rng=np.random.default_rng(k))
+               for k in range(20)]
+        assert any(m is not None for m in got)
+
 
 class TestTunnelOcclusionSensorIntegration:
     def test_cartesian_sensor_with_tunnel_returns_none_inside(self):

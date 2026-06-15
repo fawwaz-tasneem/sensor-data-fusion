@@ -8,9 +8,9 @@ plus user-supplied prior offsets and uncertainties), and optionally a
 road map. The simulation runner assembles those dependencies; the
 parameters declared here are the filter's own user-controllable knobs.
 
-Per the v6 agreement, IMM uses fixed sub-models (CV + CA + CT-known)
-with user-editable process noises and transition probability matrix.
-Editing the sub-model list itself is deferred.
+IMM uses fixed sub-models (CV + CT-left + CT-right, all sharing the 2D
+[x, vx, y, vy] layout) with user-editable process noises and transition
+probability matrix. Editing the sub-model list itself is deferred.
 
 The schema's `build` field is unused here because filter construction
 is too cross-cutting to express in a single function — the runner
@@ -22,7 +22,6 @@ from sdf.filters import (
     ExtendedKalmanFilter,
     IMMFilter,
     KalmanFilter,
-    RoadAidedExtendedKalmanFilter,
 )
 
 from dashboard.schema import ComponentChoice, ComponentSpec, ParameterSpec
@@ -76,60 +75,56 @@ EXTENDED_KALMAN = ComponentSpec(
 )
 
 
-ROAD_AIDED_EKF = ComponentSpec(
-    label="Road-aided EKF",
-    constructor=RoadAidedExtendedKalmanFilter,
-    description=(
-        "EKF augmented with a fictitious cross-track measurement from "
-        "the polygonal road map, applied at every step. Requires the "
-        "road map to be enabled."
-    ),
-    parameters=list(_PRIOR_PARAMETERS),
-)
+# Note: there is no separate "road-aided EKF" filter. Road-aiding is a
+# property of the run, not the filter: tick 'Road-aided approximation' in the
+# Road map section to fuse the road into whichever base filter you pick (KF,
+# EKF, or IMM). That keeps "which filter" and "is it road-aided" as two
+# independent choices instead of baking them into one dropdown entry.
 
 
-# IMM has its own extra parameters on top of the shared prior fields.
-# The sub-model list is fixed: CV + CA + CT-known.
-# We expose:
-#   - process noise for each sub-model (3 floats)
-#   - omega for the CT sub-model (1 float)
-#   - TPM diagonal — probability of staying in the same mode (one float
-#     per row; off-diagonals are split evenly among other modes). This
-#     is a simplification over a fully editable 3x3 matrix and is enough
-#     to demonstrate the IMM behaviour while keeping the UI tractable.
+# IMM sub-models: CV + CT + CA, all on one unified 7-D state
+# [x, vx, ax, y, vy, ay, omega] so the mixing step is well-defined. The turn
+# mode estimates its own turn rate omega (a single adaptive model handles left
+# and right turns), so there is no fixed turn-rate parameter. We expose the
+# per-mode process noises and the TPM diagonal (off-diagonals split evenly).
+# This pairs naturally with the 'Fighter jet' trajectory, which visits all
+# three regimes (and works in 2D or 3D). Stiffer CV noise makes the CV mode
+# 'fail' more visibly on maneuvers, sharpening the mode switching.
 IMM = ComponentSpec(
-    label="IMM (CV + CA + CT, fixed sub-models)",
+    label="IMM (CV + CT + CA, 3 modes)",
     constructor=IMMFilter,
     description=(
-        "Interacting Multiple Models filter with three fixed sub-models. "
-        "Process noises and the diagonal of the transition probability "
-        "matrix are user-controllable; off-diagonals are split evenly. "
-        "Sub-model selection itself is fixed in v6."
+        "Interacting Multiple Models filter with three modes on a shared "
+        "state: constant velocity (smooth), coordinated turn (adaptive turn "
+        "rate), and constant acceleration (fast maneuvers). The mode "
+        "probabilities show which dynamics the target is currently in. Pair "
+        "with the 'Fighter jet' trajectory to see all three light up."
     ),
     parameters=[
         *_PRIOR_PARAMETERS,
         ParameterSpec(
-            "cv_process_noise_std", float, default=2.0,
+            "cv_process_noise_std", float, default=0.5,
             min=0.01, max=20.0, step=0.1,
-            description="CV sub-model acceleration std-dev", unit="m/s²",
-        ),
-        ParameterSpec(
-            "ca_jerk_std", float, default=2.0,
-            min=0.01, max=20.0, step=0.1,
-            description="CA sub-model jerk std-dev", unit="m/s³",
-        ),
-        ParameterSpec(
-            "ct_omega", float, default=0.05,
-            min=-0.5, max=0.5, step=0.005,
-            description="CT sub-model turn rate", unit="rad/s",
+            description="CV mode acceleration std-dev (small = stiff)",
+            unit="m/s²",
         ),
         ParameterSpec(
             "ct_process_noise_std", float, default=1.0,
             min=0.01, max=20.0, step=0.1,
-            description="CT sub-model acceleration std-dev", unit="m/s²",
+            description="CT mode acceleration std-dev", unit="m/s²",
         ),
         ParameterSpec(
-            "tpm_self_prob", float, default=0.95,
+            "ct_omega_noise_std", float, default=0.1,
+            min=0.001, max=1.0, step=0.005,
+            description="CT mode turn-rate random-walk std-dev", unit="rad/s",
+        ),
+        ParameterSpec(
+            "ca_jerk_std", float, default=3.0,
+            min=0.01, max=20.0, step=0.1,
+            description="CA mode jerk std-dev", unit="m/s³",
+        ),
+        ParameterSpec(
+            "tpm_self_prob", float, default=0.94,
             min=0.5, max=0.999, step=0.001,
             description=(
                 "Probability of staying in the same mode (TPM diagonal); "
@@ -145,7 +140,6 @@ FILTER_CHOICE = ComponentChoice(
     options={
         "kf": KALMAN,
         "ekf": EXTENDED_KALMAN,
-        "road_aided_ekf": ROAD_AIDED_EKF,
         "imm": IMM,
     },
     default_key="ekf",

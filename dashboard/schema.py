@@ -69,8 +69,29 @@ class ParameterSpec:
                     f"{self.name}: expected length-{self.length} vector, "
                     f"got {value!r}"
                 )
-            return [self.kind(v) for v in value]
-        return self.kind(value)
+            return [self._coerce(v, slot=j) for j, v in enumerate(value)]
+        return self._coerce(value)
+
+    def _coerce(self, value: Any, slot: Optional[int] = None) -> Any:
+        """
+        Coerce one raw value to the parameter's kind, with an error message
+        that names the offending field. A blank form input arrives as None;
+        rather than a generic "float() argument must be ... not NoneType",
+        we say exactly which parameter is empty so the user can fix it.
+        """
+        where = f"'{self.name}'" if slot is None else f"'{self.name}' (slot {slot})"
+        if value is None:
+            raise ValueError(
+                f"parameter {where} is empty - enter a value for it "
+                f"(expected a {self.kind.__name__})"
+            )
+        try:
+            return self.kind(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"parameter {where}: expected a {self.kind.__name__}, "
+                f"got {value!r}"
+            ) from None
 
 
 @dataclass

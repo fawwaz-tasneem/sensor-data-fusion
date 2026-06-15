@@ -223,6 +223,10 @@ class GMTIRadarSensor(RadarSensor):
         t: float,
         rng: np.random.Generator,
     ) -> Optional[Measurement]:
+        # Sync platform pose (position + velocity, and any Doppler occlusion)
+        # to time t before measuring. Without this a GMTI on a moving platform
+        # stays frozen at its t=0 pose and range-rate is computed wrong.
+        self.set_time(t)
         if not self.is_detected(true_state, layout, rng):
             return None
         z_true = self.h(true_state, layout)

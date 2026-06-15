@@ -121,3 +121,38 @@ class TestGMTI3D:
             elevation_std=1e-3,
         )
         assert sensor.measurement_dim == 4
+
+
+class TestGMTIMovingPlatform:
+    """
+    Regression: a GMTI on a moving platform must advance its pose with time.
+
+    measure() overrides the base class; it must still call set_time(t) or the
+    sensor stays frozen at its t=0 pose for the whole run (and range-rate is
+    computed against the wrong sensor velocity).
+    """
+
+    def _sensor(self):
+        from sdf.scenarios.awacs import StraightFlight
+
+        plat = StraightFlight(
+            start_position=np.array([0.0, 0.0, 1000.0]),
+            velocity=np.array([100.0, 0.0, 0.0]),
+        )
+        return GMTIRadarSensor(
+            sensor_id="g",
+            position=np.array([0.0, 0.0, 1000.0]),
+            elevation_std=1e-2,
+            platform=plat,
+        )
+
+    def test_measure_advances_platform_pose(self):
+        sensor = self._sensor()
+        layout = StateLayout(
+            dim=3, position_idx=(0, 2, 4), velocity_idx=(1, 3, 5)
+        )
+        target = np.array([5000.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        sensor.measure(target, layout, t=20.0, rng=np.random.default_rng(0))
+        # After measuring at t=20 the platform has flown 100 m/s * 20 s = 2 km.
+        np.testing.assert_allclose(sensor.position, [2000.0, 0.0, 1000.0])
+        np.testing.assert_allclose(sensor.velocity, [100.0, 0.0, 0.0])

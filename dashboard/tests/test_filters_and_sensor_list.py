@@ -15,7 +15,9 @@ from dashboard.components import FILTER_CHOICE, SENSOR_LIST
 
 class TestFilterSpecs:
     def test_all_choices_present(self):
-        assert set(FILTER_CHOICE.keys()) == {"kf", "ekf", "road_aided_ekf", "imm"}
+        # Road-aiding is a run-level checkbox, not a filter type, so there is
+        # no separate "road_aided_ekf" entry here.
+        assert set(FILTER_CHOICE.keys()) == {"kf", "ekf", "imm"}
 
     def test_kf_defaults(self):
         spec = FILTER_CHOICE.get("kf")
@@ -27,9 +29,11 @@ class TestFilterSpecs:
     def test_imm_has_subfilter_params(self):
         spec = FILTER_CHOICE.get("imm")
         d = spec.defaults()
-        # All three sub-models' noises plus the TPM diagonal.
-        for required in ("cv_process_noise_std", "ca_jerk_std",
-                         "ct_omega", "ct_process_noise_std", "tpm_self_prob"):
+        # Sub-models are CV + CT (adaptive turn rate) + CA on a unified state:
+        # a process noise per mode, the CT turn-rate random walk, plus the TPM
+        # diagonal. (No fixed turn-rate parameter — the CT mode estimates it.)
+        for required in ("cv_process_noise_std", "ct_process_noise_std",
+                         "ct_omega_noise_std", "ca_jerk_std", "tpm_self_prob"):
             assert required in d, f"missing {required} in IMM defaults"
         # TPM self-probability should be in [0.5, 1.0).
         assert 0.5 <= d["tpm_self_prob"] < 1.0

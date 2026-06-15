@@ -1,3 +1,4 @@
+from sdf.sensors.azimuth_radar import AzimuthOnlyRadarSensor
 from sdf.sensors.base import Sensor
 from sdf.sensors.cartesian import CartesianPositionSensor
 from sdf.sensors.doppler_occlusion import DopplerBlindnessOcclusion
@@ -10,6 +11,7 @@ __all__ = [
     "Sensor",
     "CartesianPositionSensor",
     "RadarSensor",
+    "AzimuthOnlyRadarSensor",
     "GMTIRadarSensor",
     "wrap_to_pi",
     "OcclusionModel",

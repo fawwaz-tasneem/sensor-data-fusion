@@ -22,9 +22,11 @@ ROAD_MAP = ComponentSpec(
     label="Polygonal road map",
     constructor=PolygonalRoadMap,
     description=(
-        "Piecewise-linear approximation of the trajectory, used by the "
-        "road-aided EKF as a fictitious cross-track measurement. Built "
-        "by sampling the trajectory at n_nodes uniform time intervals."
+        "Piecewise-linear approximation of the trajectory. Enabling the road "
+        "map turns on road-aided filtering: the road is fused as a fictitious "
+        "cross-track measurement every step, which keeps the estimate on the "
+        "road through sensor gaps such as a tunnel. It also positions the "
+        "tunnel occlusion and draws the road in the scene."
     ),
     parameters=[
         ParameterSpec("n_nodes", int, default=30,

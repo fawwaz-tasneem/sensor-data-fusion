@@ -70,8 +70,9 @@ class TestConstantVelocitySpec:
 
 
 class TestTrajectoryChoice:
-    def test_has_both_options(self):
-        assert set(TRAJECTORY_CHOICE.keys()) == {"mountain_pass", "constant_velocity"}
+    def test_has_expected_options(self):
+        assert set(TRAJECTORY_CHOICE.keys()) == {
+            "mountain_pass", "constant_velocity", "fighter_jet"}
 
     def test_default_is_mountain_pass(self):
         assert TRAJECTORY_CHOICE.default_key == "mountain_pass"

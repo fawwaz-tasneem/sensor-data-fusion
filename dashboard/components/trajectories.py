@@ -14,6 +14,7 @@ import numpy as np
 from sdf.core.state import StateLayout
 from sdf.scenarios import (
     ConstantVelocityTrajectory,
+    FighterJetTrajectory,
     MountainPassTrajectory,
 )
 
@@ -21,15 +22,26 @@ from dashboard.schema import ComponentChoice, ComponentSpec, ParameterSpec
 
 
 def _build_constant_velocity(values: dict) -> ConstantVelocityTrajectory:
-    """Assemble a CV trajectory from a 3D position + 3D velocity."""
+    """
+    Assemble a CV trajectory from a position + velocity.
+
+    Honors a `dim` choice (2D or 3D). A 2D trajectory is the scenario you
+    need to exercise the inherently-2D filters (coordinated turn, IMM); a
+    3D trajectory pairs with the 3D radar/GMTI sensors. The interleaved
+    state layout matches what the ConstantVelocity motion model uses:
+    2D -> [x, vx, y, vy], 3D -> [x, vx, y, vy, z, vz].
+    """
+    dim = int(values.get("dim", 3))
     pos = values["initial_position"]
     vel = values["initial_velocity"]
-    # State layout matches what ConstantVelocity motion model uses:
-    # [x, vx, y, vy, z, vz] in 3D.
-    initial_state = np.array(
-        [pos[0], vel[0], pos[1], vel[1], pos[2], vel[2]], dtype=float
-    )
-    layout = StateLayout(dim=3, position_idx=(0, 2, 4), velocity_idx=(1, 3, 5))
+    if dim == 2:
+        initial_state = np.array([pos[0], vel[0], pos[1], vel[1]], dtype=float)
+        layout = StateLayout(dim=2, position_idx=(0, 2), velocity_idx=(1, 3))
+    else:
+        initial_state = np.array(
+            [pos[0], vel[0], pos[1], vel[1], pos[2], vel[2]], dtype=float
+        )
+        layout = StateLayout(dim=3, position_idx=(0, 2, 4), velocity_idx=(1, 3, 5))
     return ConstantVelocityTrajectory(initial_state=initial_state, layout=layout)
 
 
@@ -68,8 +80,13 @@ CONSTANT_VELOCITY = ComponentSpec(
     build=_build_constant_velocity,
     parameters=[
         ParameterSpec(
+            "dim", int, default=3,
+            choices=[("2D", 2), ("3D", 3)],
+            description="State-space dimension (use 2D for IMM / CT filters)",
+        ),
+        ParameterSpec(
             "initial_position", float, default=[0.0, 0.0, 0.0], length=3,
-            description="Initial position (x, y, z)", unit="m",
+            description="Initial position (x, y, z; z ignored in 2D)", unit="m",
         ),
         ParameterSpec(
             "initial_velocity", float, default=[20.0, 0.0, 0.0], length=3,
@@ -79,11 +96,42 @@ CONSTANT_VELOCITY = ComponentSpec(
 )
 
 
+FIGHTER_JET = ComponentSpec(
+    label="Fighter jet (3D hard maneuvers)",
+    constructor=FighterJetTrajectory,
+    description=(
+        "An aggressive 3D target: level flight, a hard left break turn, an "
+        "accelerating zoom climb, a harder right break turn, a diving "
+        "deceleration, then level again. The hard turns and abrupt "
+        "climb/dive break any single motion model — a plain CV filter drifts "
+        "hundreds of metres while the CV+CT+CA IMM stays locked on and its "
+        "mode probabilities track the maneuver. Pair it with the IMM filter; "
+        "in 3D it works with the default radars."
+    ),
+    parameters=[
+        ParameterSpec("dim", int, default=3,
+                      choices=[("2D", 2), ("3D", 3)],
+                      description="State-space dimension (match your sensors)"),
+        ParameterSpec("speed", float, default=200.0, min=20.0, max=600.0, step=5.0,
+                      description="Cruise speed", unit="m/s"),
+        ParameterSpec("turn_rate", float, default=0.18, min=0.02, max=0.5, step=0.01,
+                      description="Break-turn rate (harder = sharper)", unit="rad/s"),
+        ParameterSpec("tangential_accel", float, default=22.0,
+                      min=1.0, max=100.0, step=1.0,
+                      description="Accel/decel magnitude along heading", unit="m/s²"),
+        ParameterSpec("vertical_accel", float, default=18.0,
+                      min=0.0, max=100.0, step=1.0,
+                      description="Climb/dive acceleration (3D only)", unit="m/s²"),
+    ],
+)
+
+
 TRAJECTORY_CHOICE = ComponentChoice(
     label="Trajectory",
     options={
         "mountain_pass": MOUNTAIN_PASS,
         "constant_velocity": CONSTANT_VELOCITY,
+        "fighter_jet": FIGHTER_JET,
     },
     default_key="mountain_pass",
 )

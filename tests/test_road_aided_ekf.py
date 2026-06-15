@@ -157,3 +157,37 @@ def test_road_map_dim_must_match_layout_dim():
         RoadAidedExtendedKalmanFilter(
             motion_model=cv, initial_state=init, road_map=road_3d
         )
+
+
+class TestRoadCrossTrackUpdateReusable:
+    """
+    road_cross_track_update is the standalone engine behind road aiding;
+    it must constrain ANY filter's state to the road, not just the
+    RoadAidedExtendedKalmanFilter. This is what lets the dashboard fuse the
+    road map into a plain EKF.
+    """
+
+    def test_pulls_plain_ekf_estimate_onto_road(self):
+        import numpy as np
+        from sdf.core.state import StateDistribution, StateLayout
+        from sdf.filters import ExtendedKalmanFilter, road_cross_track_update
+        from sdf.motion_models import ConstantVelocity
+        from sdf.scenarios import PolygonalRoadMap
+
+        # Straight road along +x at y=0, z=0.
+        nodes = np.array([[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0],
+                          [2000.0, 0.0, 0.0]])
+        road = PolygonalRoadMap(nodes=nodes, sigma_nodes=1.0)
+        cv = ConstantVelocity(dim=3, process_noise_std=1.0)
+
+        # Start the estimate well OFF the road (200 m cross-track in y and z).
+        mean = np.array([500.0, 10.0, 200.0, 0.0, 200.0, 0.0])
+        cov = np.diag([100.0, 25, 1e4, 25, 1e4, 25])  # loose cross-track prior
+        state = StateDistribution(mean, cov, 0.0, cv.layout)
+
+        before = np.linalg.norm(road.closest_segment(cv.layout.position(state.mean))[2:])
+        new_state, seg, foot = road_cross_track_update(state, road)
+        _, _, after = road.closest_segment(cv.layout.position(new_state.mean))
+
+        assert before > 100.0
+        assert after < 5.0  # pulled essentially onto the road

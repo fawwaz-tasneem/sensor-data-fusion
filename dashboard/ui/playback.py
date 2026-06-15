@@ -249,19 +249,105 @@ def build_3d_scene(result: SimulationResult,
     return fig
 
 
-def build_error_panel(result: SimulationResult) -> go.Figure:
-    err = np.linalg.norm(
-        result.truth_positions - result.estimate_positions, axis=1
+def _fmt(v: float, unit: str = "") -> str:
+    if v is None:
+        return "-"
+    if abs(v) >= 1000:
+        s = f"{v:,.0f}"
+    elif abs(v) >= 1:
+        s = f"{v:.2f}"
+    else:
+        s = f"{v:.3f}"
+    return f"{s}{unit}"
+
+
+def build_metrics_panel(result: SimulationResult) -> html.Div:
+    """A compact table of the run's evaluation metrics (RMSE, ANEES, ...)."""
+    m = result.metrics or {}
+
+    def row(label, value, hint=""):
+        return html.Tr([
+            html.Td(label, style={"padding": "2px 8px", "color": "#444",
+                                  "whiteSpace": "nowrap"}),
+            html.Td(value, style={"padding": "2px 8px", "fontWeight": "600",
+                                  "textAlign": "right", "fontFamily": "monospace"}),
+            html.Td(hint, style={"padding": "2px 8px", "color": "#999",
+                                 "fontSize": "0.8em"}),
+        ])
+
+    # ANEES consistency verdict relative to the degrees of freedom.
+    anees = m.get("anees_position")
+    dof = m.get("anees_dof")
+    if anees is not None and dof:
+        if anees > 2 * dof:
+            verdict = "over-confident (P too small)"
+        elif anees < 0.5 * dof:
+            verdict = "over-cautious (P too large)"
+        else:
+            verdict = "consistent"
+        anees_str = f"{anees:.1f} / {dof}"
+    else:
+        anees_str, verdict = "-", ""
+
+    rows = [
+        row("Position RMSE", _fmt(m.get("rmse_position"), " m"), "overall"),
+        row("Horizontal RMSE", _fmt(m.get("rmse_horizontal"), " m"), "x-y plane"),
+        row("Vertical RMSE", _fmt(m.get("rmse_vertical"), " m"), "z / altitude"),
+        row("RMSE x / y / z",
+            f"{_fmt(m.get('rmse_x'))} / {_fmt(m.get('rmse_y'))} / {_fmt(m.get('rmse_z'))}",
+            "per axis [m]"),
+        row("Velocity RMSE", _fmt(m.get("rmse_velocity"), " m/s"), ""),
+        row("Mean / Max error",
+            f"{_fmt(m.get('mean_position_error'))} / {_fmt(m.get('max_position_error'))}",
+            "[m]"),
+        row("Final error", _fmt(m.get("final_position_error"), " m"), "last step"),
+        row("ANEES", anees_str, verdict),
+        row("Detection rate",
+            _fmt((m.get("detection_rate") or 0) * 100, " %"), "steps w/ a return"),
+    ]
+
+    return html.Div(
+        [
+            html.Div("Filter metrics", style={
+                "fontWeight": "700", "fontSize": "0.95em",
+                "padding": "4px 8px", "borderBottom": "1px solid #ddd",
+                "marginBottom": "2px"}),
+            html.Table(html.Tbody(rows), style={
+                "borderCollapse": "collapse", "fontSize": "0.85em",
+                "width": "100%"}),
+        ],
+        style={"border": "1px solid #ddd", "borderRadius": "4px",
+               "background": "white", "marginBottom": "8px"},
     )
+
+
+def build_error_panel(result: SimulationResult) -> go.Figure:
+    if result.position_error is not None:
+        err = result.position_error
+    else:
+        err = np.linalg.norm(
+            result.truth_positions - result.estimate_positions, axis=1
+        )
+    # The curve is the INSTANTANEOUS error ||estimate - truth|| at each step.
+    # RMSE (in the metrics table) is the root-mean-square of this curve over
+    # time — a single summary number, drawn here as a reference line.
+    rmse = result.metrics.get("rmse_position") if result.metrics else None
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=result.times, y=err,
         mode="lines", line=dict(color="red", width=1.2),
-        name="Position error",
+        name="Instantaneous error",
         hovertemplate="t=%{x:.0f}s<br>err=%{y:.1f}m<extra></extra>",
     ))
+    if rmse is not None:
+        fig.add_hline(
+            y=rmse, line=dict(color="#888", width=1, dash="dash"),
+            annotation_text=f"RMSE = {rmse:.0f} m",
+            annotation_position="top left",
+            annotation_font_size=10,
+        )
     fig.update_layout(
-        title="Position error [m]",
+        title="Position error ‖estimate − truth‖ vs time [m]",
         xaxis_title="t [s]", yaxis_title="error [m]",
         margin=dict(l=40, r=10, t=30, b=30),
         height=200, showlegend=False,
@@ -316,8 +402,77 @@ def build_detection_panel(result: SimulationResult) -> go.Figure:
     return fig
 
 
+def build_clutter_panel(result: SimulationResult) -> go.Figure:
+    """
+    Ground-truth Doppler clutter-notch panel.
+
+    For each sensor that carries a Doppler occlusion, plot the *true* detection
+    factor over time (1 = clear, ~0 = deep in the notch — the target's radial
+    velocity matches clutter and it is invisible). Overlay red dots on the
+    steps that were actually MISSED, so you can see misses bunch up exactly
+    where the factor collapses: that is the clutter notch causing the dropout.
+    """
+    fig = go.Figure()
+    cf = result.clutter_factor
+    for k, sid in enumerate(result.sensor_ids):
+        col = cf[:, k]
+        if np.all(np.isnan(col)):
+            continue
+        fig.add_trace(go.Scatter(
+            x=result.times, y=col, mode="lines",
+            line=dict(color="teal", width=1.4), name=f"{sid} P_D factor",
+            hovertemplate="t=%{x:.0f}s<br>factor=%{y:.2f}<extra></extra>",
+        ))
+        missed = ~result.sensor_detected[:, k]
+        fig.add_trace(go.Scatter(
+            x=result.times[missed], y=col[missed], mode="markers",
+            marker=dict(color="red", size=4, symbol="x"),
+            name=f"{sid} missed", hoverinfo="skip",
+        ))
+    fig.update_layout(
+        title="Clutter notch (ground truth): detection factor — dips ⇒ in notch ⇒ missed (×)",
+        xaxis_title="t [s]", yaxis_title="P_D factor",
+        yaxis=dict(range=[-0.05, 1.05]),
+        margin=dict(l=40, r=10, t=30, b=30),
+        height=200,
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.25,
+                    font=dict(size=8)),
+    )
+    return fig
+
+
+def build_mode_prob_panel(result: SimulationResult) -> go.Figure:
+    """
+    IMM mode probabilities over time as a stacked area (they sum to 1).
+
+    Each band is one motion model; the band that dominates shows which dynamics
+    the IMM currently believes the target is in (CV = smooth, CT = turning,
+    CA = accelerating). Watching the bands hand off across a maneuver is the
+    point — it's the IMM 'explaining' the target's behaviour.
+    """
+    colors = {"CV": "#3182bd", "CT": "#e6550d", "CA": "#31a354"}
+    fig = go.Figure()
+    labels = result.mode_labels or [f"mode {i}" for i in range(result.mode_probs.shape[1])]
+    for k, name in enumerate(labels):
+        fig.add_trace(go.Scatter(
+            x=result.times, y=result.mode_probs[:, k],
+            mode="lines", line=dict(width=0.5, color=colors.get(name, None)),
+            stackgroup="modes", name=name,
+            hovertemplate=name + " %{y:.2f}<extra></extra>",
+        ))
+    fig.update_layout(
+        title="IMM mode probability (CV smooth / CT turn / CA maneuver)",
+        xaxis_title="t [s]", yaxis_title="probability",
+        yaxis=dict(range=[0, 1]),
+        margin=dict(l=40, r=10, t=30, b=30), height=200,
+        legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.25,
+                    font=dict(size=9)),
+    )
+    return fig
+
+
 def playback_layout(result: Optional[SimulationResult]) -> html.Div:
-    """Top-level playback layout: 3D scene + 3 side panels."""
+    """Top-level playback layout: 3D scene + side panels."""
     if result is None:
         return html.Div(
             "Configure a scenario on the left and click 'Run simulation'.",
@@ -325,19 +480,37 @@ def playback_layout(result: Optional[SimulationResult]) -> html.Div:
                    "color": "#888", "fontSize": "1.1em"},
         )
 
+    warning_banner = []
+    if result.warnings:
+        warning_banner = [html.Div(
+            [html.Span("⚠ ", style={"fontWeight": "bold"}), w]
+            ,
+            style={"background": "#fffbe6", "border": "1px solid #f0c000",
+                   "borderRadius": "4px", "padding": "6px 10px",
+                   "margin": "0 0 8px 0", "fontSize": "0.85em",
+                   "color": "#8a6d00"},
+        ) for w in result.warnings]
+
     return html.Div(
         [
             html.Div(
-                dcc.Graph(figure=build_3d_scene(result),
-                          id="playback-3d"),
+                warning_banner + [dcc.Graph(figure=build_3d_scene(result),
+                                            id="playback-3d")],
                 style={"flex": "2", "minWidth": "0"},
             ),
             html.Div(
                 [
+                    build_metrics_panel(result),
                     dcc.Graph(figure=build_error_panel(result)),
                     dcc.Graph(figure=build_altitude_panel(result)),
                     dcc.Graph(figure=build_detection_panel(result)),
-                ],
+                ] + (
+                    [dcc.Graph(figure=build_mode_prob_panel(result))]
+                    if result.mode_probs is not None else []
+                ) + (
+                    [dcc.Graph(figure=build_clutter_panel(result))]
+                    if result.clutter_factor is not None else []
+                ),
                 style={"flex": "1", "minWidth": "0",
                        "display": "flex", "flexDirection": "column"},
             ),

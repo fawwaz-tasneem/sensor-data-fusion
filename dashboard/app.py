@@ -87,6 +87,25 @@ def _fetch_result(rid: int) -> SimulationResult | None:
 # ----------------------------------------------------------------------
 
 
+def _coerce_named(value: Any, kind, name: str, default: Any) -> Any:
+    """
+    Coerce a single top-level config value, naming the field on failure.
+
+    The `sim` section isn't built from a ComponentSpec, so it doesn't get
+    ParameterSpec's named-error treatment. This mirrors it: a missing value
+    falls back to the default; a present-but-unparseable one says which field
+    is wrong instead of a bare "float() argument must be ... not NoneType".
+    """
+    if value is None:
+        return default
+    try:
+        return kind(value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"parameter '{name}': expected a {kind.__name__}, got {value!r}"
+        ) from None
+
+
 def _gather_section_params(
     field_ids: list[dict],
     values: list[Any],
@@ -115,6 +134,45 @@ def _gather_section_params(
     for field, slots in vector_slots.items():
         out[field] = [slots[k] for k in sorted(slots)]
 
+    return out
+
+
+def _gather_sensor_list(field_ids: list[dict], values: list[Any]) -> list[dict]:
+    """
+    Reconstruct the sensor list ``[{type, params}, ...]`` from the form fields.
+
+    The ``sensor-list-store`` only tracks add/remove (each new entry carries
+    default type + default params); the actual per-sensor *type dropdown* and
+    *parameter edits* live in the rendered form inputs and are never written
+    back to the store. So the current configuration must be read from the form
+    here, grouped by entry index — otherwise Run always uses the stale defaults
+    (e.g. it builds the default radars even after you switch one to a GMTI).
+    """
+    types: dict[int, Any] = {}        # index -> selected sensor type
+    scalars: dict[int, dict] = {}     # index -> {field: value}
+    vectors: dict[int, dict] = {}     # index -> {field: {slot: value}}
+
+    for fid, val in zip(field_ids, values):
+        if fid is None or fid.get("section") != "sensor_list":
+            continue
+        field = fid.get("field")
+        idx = fid.get("index")
+        if field == "__type__":
+            types[idx] = val
+            continue
+        if field is None or field.startswith("__"):
+            continue
+        if "slot" in fid:
+            vectors.setdefault(idx, {}).setdefault(field, {})[fid["slot"]] = val
+        else:
+            scalars.setdefault(idx, {})[field] = val
+
+    out = []
+    for idx in sorted(types):
+        params = dict(scalars.get(idx, {}))
+        for field, slots in vectors.get(idx, {}).items():
+            params[field] = [slots[k] for k in sorted(slots)]
+        out.append({"type": types[idx], "params": params})
     return out
 
 
@@ -348,9 +406,16 @@ def _register_callbacks(app: Dash) -> None:
                                                "road_map")
             sim_params = _gather_section_params(all_ids, all_vals,
                                                 "sim")
-            sensor_list = (sensor_entries
-                           if sensor_entries is not None
-                           else SENSOR_LIST.defaults())
+            # Read the sensor list from the live form (type dropdowns + field
+            # edits), not from the store — the store only tracks add/remove and
+            # would otherwise force the default radars regardless of what was
+            # configured. Fall back to the store/defaults only if the form
+            # produced nothing (e.g. no sensor cards rendered yet).
+            sensor_list = _gather_sensor_list(all_ids, all_vals)
+            if not sensor_list:
+                sensor_list = (sensor_entries
+                               if sensor_entries is not None
+                               else SENSOR_LIST.defaults())
 
             # Validate per-section via specs.
             road_enabled = bool(road_enabled_value)
@@ -381,8 +446,8 @@ def _register_callbacks(app: Dash) -> None:
                     "params": ROAD_MAP.validate(rm_params),
                 },
                 "sim": {
-                    "seed": int(sim_params.get("seed", 42)),
-                    "dt": float(sim_params.get("dt", 1.0)),
+                    "seed": _coerce_named(sim_params.get("seed"), int, "seed", 42),
+                    "dt": _coerce_named(sim_params.get("dt"), float, "dt", 1.0),
                 },
             }
 

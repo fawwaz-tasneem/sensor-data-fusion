@@ -212,6 +212,10 @@ class RadarSensor(Sensor):
         t: float,
         rng: np.random.Generator,
     ) -> Optional[Measurement]:
+        # Sync the sensor's pose with the current time before measuring. The
+        # base class does this; this override must too, or a moving sensor
+        # (e.g. a GMTI subclass on a platform) stays frozen at its t=0 pose.
+        self.set_time(t)
         if not self.is_detected(true_state, layout, rng):
             return None
         z_true = self.h(true_state, layout)

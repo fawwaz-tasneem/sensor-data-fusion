@@ -41,6 +41,67 @@ from sdf.scenarios.road_map import PolygonalRoadMap
 from sdf.sensors.base import Sensor
 
 
+def road_cross_track_update(
+    state: StateDistribution, road_map: PolygonalRoadMap
+) -> tuple[StateDistribution, int, np.ndarray]:
+    """
+    Apply one road-map fictitious cross-track measurement to ``state``.
+
+    This is the standalone engine behind the road-aided filter: it asserts
+    "the target is on the nearest road segment" by constructing a fictitious
+    measurement of the cross-track displacement (perpendicular to the road),
+    with measured value zero and variance sigma_r^2 = sigma_mapping^2 +
+    sigma_discretization^2. Only the cross-track directions are constrained;
+    the along-track (tangent) direction is left free, so the update pins the
+    estimate to the road manifold without claiming to know where along it the
+    target is. Pulling this out as a free function lets *any* filter (not just
+    RoadAidedExtendedKalmanFilter) fuse the road map — e.g. the dashboard
+    applies it to a plain EKF whenever the road map is enabled.
+
+    Returns the updated state plus the chosen segment index and projection
+    foot (handy for visualization / association diagnostics).
+    """
+    layout = state.layout
+    x_pred = state.mean
+    P_pred = state.covariance
+
+    # 1. Closest road segment to the predicted position.
+    position = layout.position(x_pred)
+    seg_idx, foot, _ = road_map.closest_segment(position)
+    seg = road_map.segments[seg_idx]
+
+    # 2. Cross-track normal basis, shape (dim - 1, dim).
+    N = road_map.cross_track_normals(seg_idx)
+
+    # 3. h(x) = N (p(x) - foot); dh/dx = N J_p where J_p selects positions.
+    n_state = x_pred.shape[0]
+    J_p = np.zeros((layout.dim, n_state))
+    for i, idx in enumerate(layout.position_idx):
+        J_p[i, idx] = 1.0
+    H = N @ J_p
+
+    z_pred = N @ (position - foot)
+    z = np.zeros(layout.dim - 1)
+    R = seg.sigma_r2 * np.eye(layout.dim - 1)
+
+    # 4. Standard (linear) Kalman update — cross-track is linear in position.
+    y = z - z_pred
+    S = H @ P_pred @ H.T + R
+    K = np.linalg.solve(S.T, (P_pred @ H.T).T).T
+    x_new = x_pred + K @ y
+    I = np.eye(n_state)
+    IKH = I - K @ H
+    P_new = IKH @ P_pred @ IKH.T + K @ R @ K.T
+
+    new_state = StateDistribution(
+        mean=x_new,
+        covariance=P_new,
+        timestamp=state.timestamp,
+        layout=layout,
+    )
+    return new_state, seg_idx, foot
+
+
 class RoadAidedExtendedKalmanFilter(ExtendedKalmanFilter):
     """EKF with the ability to incorporate road-map information."""
 
@@ -77,57 +138,17 @@ class RoadAidedExtendedKalmanFilter(ExtendedKalmanFilter):
 
         The measurement is *scalar* in 2D and *2-dimensional* in 3D, so
         the update is numerically clean (no near-singular S).
-        """
-        layout = self.state.layout
-        x_pred = self.state.mean
-        P_pred = self.state.covariance
 
-        # 1. Segment selection.
-        position = layout.position(x_pred)
-        seg_idx, foot, _ = self.road_map.closest_segment(position)
-        seg = self.road_map.segments[seg_idx]
+        The actual math lives in the module-level ``road_cross_track_update``
+        so that other filters can reuse it; this method just applies it to
+        ``self.state`` and records the chosen segment for visualization.
+        """
+        new_state, seg_idx, foot = road_cross_track_update(
+            self.state, self.road_map
+        )
         self.last_segment_idx = seg_idx
         self.last_foot = foot.copy()
-
-        # 2. Cross-track normal basis. Shape: (dim - 1, dim).
-        N = self.road_map.cross_track_normals(seg_idx)
-
-        # 3. Build H. h(x) = N (p(x) - foot) where p(x) selects positions
-        #    out of x. dh/dx = N * J_p, where J_p is the selector matrix
-        #    that picks out the position indices from x.
-        n_state = x_pred.shape[0]
-        J_p = np.zeros((layout.dim, n_state))
-        for i, idx in enumerate(layout.position_idx):
-            J_p[i, idx] = 1.0
-        H = N @ J_p  # shape (dim - 1, n_state)
-
-        # Predicted measurement is the cross-track displacement of the
-        # predicted position from the segment foot.
-        z_pred = N @ (position - foot)
-        # The "fictitious" measurement is exactly zero: we assert the
-        # vehicle is on the road.
-        z = np.zeros(layout.dim - 1)
-
-        # Total cross-track variance (mapping + discretization).
-        R = seg.sigma_r2 * np.eye(layout.dim - 1)
-
-        # 4. Standard EKF update equations. We don't go through sensor.update
-        #    because there's no Sensor object — the road is internal.
-        y = z - z_pred  # plain subtraction is fine: cross-track is linear
-        S = H @ P_pred @ H.T + R
-        # Solve form, not inv.
-        K = np.linalg.solve(S.T, (P_pred @ H.T).T).T
-        x_new = x_pred + K @ y
-        I = np.eye(n_state)
-        IKH = I - K @ H
-        P_new = IKH @ P_pred @ IKH.T + K @ R @ K.T
-
-        self.state = StateDistribution(
-            mean=x_new,
-            covariance=P_new,
-            timestamp=self.state.timestamp,
-            layout=layout,
-        )
+        self.state = new_state
         return self.state
 
     # ----- Convenience -------------------------------------------------

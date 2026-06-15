@@ -300,7 +300,8 @@ def scenario_builder_layout() -> html.Div:
                 dcc.Checklist(
                     id={"section": "road_map", "field": "__enabled__",
                         "index": 0},
-                    options=[{"label": " Enable road map", "value": True}],
+                    options=[{"label": " Enable road map (road-aided filtering)",
+                              "value": True}],
                     value=[True],
                 ),
                 form_for_spec(ROAD_MAP, section="road_map"),
