@@ -7,16 +7,19 @@ small explicit interface and is plug-compatible with the rest.
 
 ![Mountain pass with tunnel — four-panel result](results/mountain_pass_with_tunnel.png)
 
+![Mountain pass with tunnel](results/mountain_pass.gif) 
+
+
 The headline scenario: a 3D mountain-pass road with a tunnel midway, two
 stationary radars, and a target traversing the road. Inside the tunnel both
-radars lose the target; with the road map enabled, a fictitious cross-track
-measurement keeps the estimate on the road manifold (altitude and lateral
-position constrained) while a plain EKF coasts on motion-model prediction alone
-and drifts off. Re-acquisition uses the same filter design — no per-scenario
+radars lose the target; with the road map enabled, the road takes over as a
+fictitious measurement and keeps the estimate on the road manifold (altitude and
+lateral position constrained) while a plain EKF coasts on motion-model
+prediction alone and drifts off. Re-acquisition uses the same filter design — no per-scenario
 tuning. You can rebuild this end to end in the dashboard (mountain-pass
 trajectory + tunnel occlusion + *Enable road map*).
 
-> 455 tests passing · Python 3.10+ · MIT license
+> 459 tests passing · Python 3.10+ · MIT license
 
 ---
 
@@ -56,12 +59,16 @@ to bridge to the textbook.
 
 Highlights:
 
-- **Road-map–aided tracking.** A `PolygonalRoadMap` with explicit per-segment
-  arc length (separate from the chord length), so the discretization-error
-  variance σ_d is computed correctly when the polygon under-samples a curved
-  road. Enabling the road map fuses a fictitious cross-track measurement every
-  step (Koch's formulation), which keeps the estimate on the road through a
-  sensor gap — the mechanism behind the tunnel demo.
+- **Road-map–aided tracking as an occlusion fallback.** A `PolygonalRoadMap`
+  with explicit per-segment arc length (separate from the chord length), so the
+  discretization-error variance σ_d is computed correctly when the polygon
+  under-samples a curved road. The road map is fused as a fictitious
+  measurement **only on steps where every sensor misses** (a blackout): the
+  predicted position is projected onto the nearest discretized segment, and that
+  point is fused with an oriented covariance — low cross-track (pinned to the
+  road), high along-track (longitudinal position left loose). The sensors do the
+  tracking; the road only takes over to coast the estimate across the gap — the
+  mechanism behind the tunnel demo.
 - **A three-mode IMM on a unified state.** Constant-velocity, coordinated-turn
   (with an *estimated* turn rate, so one model handles left and right turns),
   and constant-acceleration modes all share one state vector
@@ -122,9 +129,11 @@ Each sensor optionally carries an `OcclusionModel`:
 
 - `KalmanFilter` — linear measurements only
 - `ExtendedKalmanFilter` — local linearization for radar / GMTI / azimuth radar
-- `RoadAidedExtendedKalmanFilter` — EKF augmented by a road-map cross-track
-  measurement (also exposed as the standalone `road_cross_track_update`, which
-  the dashboard applies to whichever filter you choose when the road map is on)
+- `RoadAidedExtendedKalmanFilter` — EKF augmented by a road-map fictitious
+  measurement (the predicted position projected onto the nearest segment, fused
+  with low cross-track / high along-track covariance; also exposed as the
+  standalone `road_cross_track_update`, which the dashboard applies to whichever
+  filter you choose, only on steps where every sensor misses)
 - `IMMFilter` — Interacting Multiple Models over an arbitrary sub-filter list;
   the dashboard wires it as the unified CV + CT + CA bank
 
@@ -164,8 +173,8 @@ The scenario builder covers:
 - **Occlusion** — none, tunnel, or Doppler clutter notch
 - **Filter** — KF, EKF, or the three-mode IMM
 - **Road map** — enabling it turns on road-aided filtering (a fictitious
-  cross-track measurement) and positions any tunnel; node count and σ are
-  adjustable
+  road-segment measurement, fused only when every sensor misses) and positions
+  any tunnel; node count and σ are adjustable
 - **Simulation** — seed and time step
 
 Clicking *Run simulation* produces a 3D Plotly scene (truth, estimate, sensors,
@@ -205,6 +214,47 @@ exactly what to change; a blank form field names itself). An *Export MP4* button
 | `gmti_awacs_road.py`            | GMTI on an AWACS racetrack + 2 radars + road       |
 | `imm_aircraft.py`               | IMM on a maneuvering aircraft                       |
 
+The figures below are produced by these scripts (re-run them to regenerate the
+PNGs in `results/`).
+
+**`mountain_pass_ekf_3d.py` — 3D winding road, EKF, single radar.** A CV-model
+EKF tracks a sinusoidal mountain road in plan view and altitude; the radar sees
+range/bearing/elevation, so altitude stays observable and the estimate hugs the
+truth.
+
+![Mountain-pass EKF: top-down view and altitude profile](results/mountain_pass_ekf.png)
+
+**`road_map_2d.py` — road-aided EKF on a 2D road.** The same target tracked with
+and without the road map. This example deliberately applies the road constraint
+*every step* (the radar detects continuously) to isolate the bare cross-track
+mechanism; pinning to the road manifold pulls the per-step error down (mean ≈ 21 m
+vs ≈ 32 m for the plain EKF). The operational policy elsewhere — dashboard and
+the GMTI examples below — fuses the road only when the sensors return nothing.
+
+![Road-aided tracking vs plain EKF](results/road_map_2d.png)
+
+**`gmti_road_2d.py` — GMTI range-rate tracking through a stop.** When the target
+halts inside the GMTI clutter notch its radial velocity vanishes and detections
+drop out (grey band). The plain EKF coasts and spikes; the road-aided variant
+(C) stays constrained to the road through the blackout. (`gmti_with_road_constraint.py`
+runs the same comparison.)
+
+![GMTI tracking through a clutter-notch stop](results/gmti_road_2d.png)
+
+**`gmti_awacs_road.py` — GMTI on an AWACS racetrack + road map.** A GMTI sensor
+riding an orbiting AWACS platform tracks a road-bound vehicle. During the stop
+(grey band) the moving platform's Doppler notch suppresses detections; error
+climbs and then re-acquires once the vehicle moves again.
+
+![GMTI-on-AWACS with road map](results/gmti_awacs_road.png)
+
+**`imm_aircraft.py` — IMM on a maneuvering aircraft.** A three-mode IMM
+(CV / CT / CA) tracks a jet through straight, left-turn, and right-turn segments.
+The bottom panel shows the mode probabilities handing off across each maneuver;
+the IMM roughly halves the plain-CV error (mean ≈ 13 m vs ≈ 22 m).
+![IMM aircraft](results/aircraft_maneuver.gif)
+![IMM aircraft: trajectory, per-step error, and mode probabilities](results/imm_aircraft.png)
+
 ## Limitations
 
 The dashboard's side panels show the full time series; they do not yet scrub in
@@ -225,7 +275,7 @@ src/sdf/                        Core framework (no Dash dependency)
 └── viz/                        Visualization helpers (matplotlib + geometry)
 
 examples/                       Runnable demonstration scripts
-tests/                          Framework tests (187)
+tests/                          Framework tests (191)
 dashboard/                      Plotly Dash app — outside the package
 ├── components/                 Spec-based component registries
 ├── ui/                         Form generator + playback view

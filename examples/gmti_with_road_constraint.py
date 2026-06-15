@@ -156,7 +156,9 @@ def main() -> None:
         ekf_c.predict(t)
         if m_blind is not None:
             ekf_c.update(m_blind, gmti_blind)
-        ekf_c.update_with_road()
+        else:
+            # No reading (target in the clutter notch): fall back on the road.
+            ekf_c.update_with_road()
         track_c.append(ekf_c.state.mean.copy())
         detections_c.append(m_blind is not None)
 

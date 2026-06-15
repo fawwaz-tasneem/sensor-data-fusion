@@ -645,13 +645,14 @@ def run_simulation(config: dict) -> SimulationResult:
                 any_detected = True
         _record_clutter(ti)
 
-        # Road-aided approximation: apply the fictitious cross-track
-        # measurement every step the road map is enabled (Koch's standard
-        # formulation — the target is always on the road, so the constraint is
-        # always valid). This continuously constrains the cross-track subspace,
-        # which is what lets it fix the unobservable altitude of an
-        # azimuth-only radar and keep the estimate on the road through a tunnel.
-        if road_aided:
+        # Road-aided fallback: fuse the road-map fictitious measurement ONLY
+        # on steps where every sensor missed (occlusion / blackout). The
+        # sensors do the tracking; the road map takes over to coast the
+        # estimate across the gap — projecting onto the predicted segment and
+        # pinning cross-track while leaving longitudinal position loose. This
+        # is what keeps the estimate on the road through a tunnel without
+        # over-constraining it while live sensor data is available.
+        if road_aided and not any_detected:
             if isinstance(flt, IMMFilter):
                 # IMM keeps its estimate in per-mode sub-filters; constrain
                 # each sub-filter so the constraint survives the next mix.

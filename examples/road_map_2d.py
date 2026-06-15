@@ -167,7 +167,11 @@ def main() -> None:
         plain_ekf.update(m, radar)
         aided_ekf.predict(t)
         aided_ekf.update(m, radar)
-        # Apply the road update at every step.
+        # NOTE: this radar detects every step, so to show the bare cross-track
+        # mechanism at all we apply the road update on top of each measurement.
+        # That is *not* the operational policy — in a real run (and in the
+        # dashboard / GMTI examples) the road map is fused only when the
+        # sensors return nothing (an occlusion fallback). See road_aided_ekf.
         aided_ekf.update_with_road()
         plain_track.append(plain_ekf.state.mean.copy())
         aided_track.append(aided_ekf.state.mean.copy())

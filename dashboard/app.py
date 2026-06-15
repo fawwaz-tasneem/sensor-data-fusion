@@ -489,14 +489,17 @@ def _register_callbacks(app: Dash) -> None:
         if result is None:
             return no_update, "Result expired from cache — re-run."
         try:
+            # Returns an .mp4 when ffmpeg (system or imageio-ffmpeg) is found,
+            # otherwise falls back to an animated .gif — so export always works.
             path = export_mp4_to_tempfile(result)
-            return dcc.send_file(str(path), filename=f"sdf_run_{rid}.mp4"), \
-                   f"Exported {path.name}"
-        except RuntimeError as exc:
-            return no_update, str(exc)
+            fmt = path.suffix.lstrip(".").upper()
+            note = (f"Exported {fmt} (no ffmpeg found — fell back to GIF; "
+                    "`pip install imageio-ffmpeg` for MP4)."
+                    if path.suffix == ".gif" else f"Exported {fmt}.")
+            return dcc.send_file(str(path), filename=f"sdf_run_{rid}{path.suffix}"), note
         except Exception as exc:
-            log.exception("MP4 export failed")
-            return no_update, f"MP4 export failed: {exc}"
+            log.exception("Video export failed")
+            return no_update, f"Export failed: {exc}"
 
 
 # ----------------------------------------------------------------------

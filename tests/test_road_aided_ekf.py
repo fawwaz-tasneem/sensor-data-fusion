@@ -81,6 +81,77 @@ class TestRoadUpdate:
         assert var_y_after < var_y_before
 
 
+class TestOrientedCovariance:
+    """
+    The fictitious measurement is a *point* with an oriented covariance: low
+    cross-track, high along-track. So a single update should collapse the
+    cross-track variance while leaving the along-track variance essentially
+    untouched (we make almost no claim about longitudinal position).
+    """
+
+    def test_along_track_variance_barely_shrinks(self):
+        cv = ConstantVelocity(dim=2, process_noise_std=0.5)
+        road = _straight_2d_road()  # along the x-axis
+        init = _initial_state(cv.layout, [500.0, 10.0, 50.0, 0.0])
+        f = RoadAidedExtendedKalmanFilter(
+            motion_model=cv, initial_state=init, road_map=road
+        )
+        var_x_before = f.state.covariance[0, 0]  # along-track (x)
+        var_y_before = f.state.covariance[2, 2]  # cross-track (y)
+        f.update_with_road()
+        var_x_after = f.state.covariance[0, 0]
+        var_y_after = f.state.covariance[2, 2]
+        # Cross-track collapses; along-track is left (nearly) free.
+        assert var_y_after < 0.5 * var_y_before
+        assert var_x_after > 0.99 * var_x_before
+
+    def test_smaller_factor_constrains_along_track_more(self):
+        # A finite, smaller longitudinal_factor lets the point update pull the
+        # along-track variance down more than the (near-infinite) default does.
+        cv = ConstantVelocity(dim=2, process_noise_std=0.5)
+        road = _straight_2d_road()
+        init = _initial_state(cv.layout, [500.0, 10.0, 50.0, 0.0])
+
+        f_loose = RoadAidedExtendedKalmanFilter(cv, init.copy(), road)
+        f_tight = RoadAidedExtendedKalmanFilter(cv, init.copy(), road)
+        f_loose.update_with_road(longitudinal_factor=100.0)
+        f_tight.update_with_road(longitudinal_factor=1.0)
+        assert f_tight.state.covariance[0, 0] < f_loose.state.covariance[0, 0]
+
+
+class TestStepWithRoadFallback:
+    """step_with_road fuses the road only when there is NO measurement."""
+
+    def setup_method(self):
+        self.cv = ConstantVelocity(dim=2, process_noise_std=0.5)
+        self.road = _straight_2d_road()
+
+    def test_road_applied_when_measurement_absent(self):
+        init = _initial_state(self.cv.layout, [500.0, 10.0, 50.0, 0.0])
+        f = RoadAidedExtendedKalmanFilter(self.cv, init, self.road)
+        f.step_with_road(1.0, measurement=None, sensor=None)
+        # last_segment_idx is set only by the road update, so it firing proves
+        # the fallback ran.
+        assert f.last_segment_idx is not None
+
+    def test_road_skipped_when_measurement_present(self):
+        init = _initial_state(self.cv.layout, [500.0, 10.0, 50.0, 0.0])
+        f = RoadAidedExtendedKalmanFilter(self.cv, init, self.road)
+        radar = RadarSensor(
+            sensor_id="r1",
+            position=np.array([0.0, -500.0]),
+            range_std=20.0,
+            bearing_std=1e-2,
+            detection_prob=1.0,
+        )
+        rng = np.random.default_rng(0)
+        x_true = np.array([510.0, 10.0, 0.0, 0.0])
+        m = radar.measure(x_true, self.cv.layout, 1.0, rng)
+        assert m is not None
+        f.step_with_road(1.0, measurement=m, sensor=radar)
+        assert f.last_segment_idx is None  # road fallback did NOT run
+
+
 class TestRoadVsNoRoad:
     """Road aiding should reduce error vs. plain EKF on the same scenario."""
 

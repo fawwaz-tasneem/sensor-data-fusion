@@ -147,9 +147,9 @@ def main() -> None:
             gmti_detections.append(True)
         else:
             gmti_detections.append(False)
-
-        # Road constraint on the aided filter only.
-        aided_ekf.update_with_road()
+            # No GMTI reading (Doppler notch): fall back on the road for the
+            # aided filter only. The plain EKF just coasts on prediction.
+            aided_ekf.update_with_road()
 
         plain_track.append(plain_ekf.state.mean.copy())
         aided_track.append(aided_ekf.state.mean.copy())

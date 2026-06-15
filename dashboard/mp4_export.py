@@ -1,20 +1,25 @@
 """
-MP4 export of a SimulationResult.
+Video export of a SimulationResult.
 
 The Plotly playback renders inline in the browser; for download, we use
-matplotlib's `FuncAnimation` with the `ffmpeg` writer to produce a real
-MP4 file. Same animated content: 3D scene with truth/estimate
-trajectories, sensors, road map, and tunnel.
+matplotlib's `FuncAnimation` to produce a real video file. Same animated
+content: 3D scene with truth/estimate trajectories, sensors, road map, and
+tunnel.
 
-`ffmpeg` must be available on PATH. If it isn't, `export_mp4` raises
-RuntimeError with a clear message; the dashboard's export callback
-catches that and shows a user-facing error.
+We try, in order:
+  1. a system `ffmpeg` on PATH                -> MP4
+  2. the `imageio-ffmpeg` pip package's bundled ffmpeg  -> MP4
+  3. matplotlib's built-in Pillow writer      -> animated GIF (always works)
+
+So the export works with no system install: `pip install imageio-ffmpeg`
+gets you real MP4s, and even with nothing extra installed you still get a GIF.
 """
 from __future__ import annotations
 
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Optional
 
 import matplotlib
 import numpy as np
@@ -27,11 +32,18 @@ import matplotlib.pyplot as plt
 from dashboard.simulation import SimulationResult
 
 
-def _check_ffmpeg() -> None:
-    if shutil.which("ffmpeg") is None:
-        raise RuntimeError(
-            "ffmpeg not found on PATH. Install ffmpeg to use MP4 export."
-        )
+def _ffmpeg_path() -> Optional[str]:
+    """Locate an ffmpeg executable: system PATH first, then imageio-ffmpeg's
+    bundled binary. Returns None if neither is available (caller falls back to
+    a GIF)."""
+    exe = shutil.which("ffmpeg")
+    if exe:
+        return exe
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        return None
 
 
 def export_mp4(
@@ -53,9 +65,9 @@ def export_mp4(
           (1 / dt) * (1 / stride) fps; default 20 makes 1s of video =
           ~5s of simulation at dt=1s, stride=5.
 
-    Returns the output path.
+    Returns the output path actually written — which has a `.mp4` suffix when
+    ffmpeg is available, or `.gif` when it falls back to the Pillow writer.
     """
-    _check_ffmpeg()
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -130,14 +142,25 @@ def export_mp4(
     anim = animation.FuncAnimation(
         fig, update, frames=len(idx), interval=1000 / fps, blit=False,
     )
-    writer = animation.FFMpegWriter(fps=fps, bitrate=2000)
-    anim.save(str(output_path), writer=writer, dpi=100)
+
+    ffmpeg = _ffmpeg_path()
+    if ffmpeg is not None:
+        matplotlib.rcParams["animation.ffmpeg_path"] = ffmpeg
+        out = output_path.with_suffix(".mp4")
+        writer = animation.FFMpegWriter(fps=fps, bitrate=2000)
+    else:
+        # No ffmpeg anywhere: fall back to an animated GIF via Pillow, which
+        # ships with matplotlib — so export always produces something.
+        out = output_path.with_suffix(".gif")
+        writer = animation.PillowWriter(fps=fps)
+    anim.save(str(out), writer=writer, dpi=100)
     plt.close(fig)
-    return output_path
+    return out
 
 
 def export_mp4_to_tempfile(result: SimulationResult, **kwargs) -> Path:
-    """Convenience: render to a temp file and return its path."""
+    """Convenience: render to a temp file and return its path. The suffix of the
+    returned path reflects the format actually produced (.mp4 or .gif)."""
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
     tmp.close()
     return export_mp4(result, tmp.name, **kwargs)
